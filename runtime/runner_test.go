@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/kiry163/easyllm/provider"
@@ -11,6 +12,9 @@ import (
 type fakeClient struct{}
 
 func (fakeClient) Generate(ctx context.Context, req provider.ModelRequest) (*provider.ModelResponse, error) {
+	if req.Model != "" {
+		return nil, fmt.Errorf("expected empty model in runtime request, got %q", req.Model)
+	}
 	hasToolResult := false
 	for _, item := range req.Input {
 		if _, ok := item.(provider.ToolResultItem); ok {
@@ -53,7 +57,7 @@ func TestRunnerExecutesToolCallsWithinSession(t *testing.T) {
 		t.Fatalf("NewStruct returned error: %v", err)
 	}
 
-	session := NewSession("gpt-test")
+	session := NewSession()
 	session.AppendUserText("hello")
 
 	runner := Runner{Client: fakeClient{}}
@@ -74,7 +78,7 @@ func TestRunnerExecutesToolCallsWithinSession(t *testing.T) {
 }
 
 func TestSessionMessagesViewIncludesToolResults(t *testing.T) {
-	session := NewSession("gpt-test")
+	session := NewSession()
 	session.AppendUserText("hello")
 	session.AppendItems(provider.ToolResultItem{
 		CallID:  "call_1",

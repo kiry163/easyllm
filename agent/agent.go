@@ -9,12 +9,10 @@ import (
 )
 
 type Agent struct {
-	Model        string
 	Instructions string
 	Tools        []tool.Tool
-	Client       provider.Client
+	Client       provider.ModelClient
 	Runner       *runtime.Runner
-	Options      map[string]any
 }
 
 type RunRequest struct {
@@ -32,7 +30,7 @@ type RunResult struct {
 func (a Agent) Run(ctx context.Context, req RunRequest) (*RunResult, error) {
 	session := req.Session
 	if session == nil {
-		session = runtime.NewSession(a.Model)
+		session = runtime.NewSession()
 	}
 	if a.Instructions != "" && len(session.Items) == 0 {
 		session.AppendItems(provider.SystemMessageItem{
@@ -49,7 +47,6 @@ func (a Agent) Run(ctx context.Context, req RunRequest) (*RunResult, error) {
 	result, err := runner.Run(ctx, runtime.RunRequest{
 		Session:       session,
 		Tools:         a.Tools,
-		Options:       a.Options,
 		MaxModelCalls: 3,
 		Metadata:      req.Metadata,
 	})

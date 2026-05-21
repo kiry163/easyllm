@@ -26,10 +26,24 @@ func (fakeClient) Generate(ctx context.Context, req provider.ModelRequest) (*pro
 
 func TestAgentRunAppendsInputAndReturnsOutput(t *testing.T) {
 	a := Agent{
-		Model:        "gpt-test",
 		Instructions: "be helpful",
 		Client:       fakeClient{},
 		Runner:       &runtime.Runner{Client: fakeClient{}},
+	}
+
+	result, err := a.Run(context.Background(), RunRequest{Input: "hello"})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if result.OutputText != "done" {
+		t.Fatalf("unexpected output: %q", result.OutputText)
+	}
+}
+
+func TestAgentRunDoesNotRequireAgentModelWhenProviderOwnsIt(t *testing.T) {
+	a := Agent{
+		Client: fakeClient{},
+		Runner: &runtime.Runner{Client: fakeClient{}},
 	}
 
 	result, err := a.Run(context.Background(), RunRequest{Input: "hello"})

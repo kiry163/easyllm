@@ -10,7 +10,6 @@ type Message struct {
 
 type Session struct {
 	ID           string
-	Model        string
 	Items        []provider.InputItem
 	Usage        provider.Usage
 	LastResponse *provider.ModelResponse
@@ -22,7 +21,6 @@ type SessionOption func(*Session)
 
 type SessionSnapshot struct {
 	ID           string
-	Model        string
 	Items        []provider.InputItem
 	Usage        provider.Usage
 	LastResponse *provider.ModelResponse
@@ -30,9 +28,8 @@ type SessionSnapshot struct {
 	Metadata     map[string]any
 }
 
-func NewSession(model string, opts ...SessionOption) *Session {
+func NewSession(opts ...SessionOption) *Session {
 	session := &Session{
-		Model:    model,
 		Metadata: map[string]any{},
 	}
 	for _, opt := range opts {
@@ -82,7 +79,6 @@ func (s *Session) MessagesView() []Message {
 func (s *Session) Snapshot() SessionSnapshot {
 	return SessionSnapshot{
 		ID:           s.ID,
-		Model:        s.Model,
 		Items:        s.ItemsView(),
 		Usage:        s.Usage,
 		LastResponse: s.LastResponse,

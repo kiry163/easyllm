@@ -26,7 +26,7 @@ type RunResult struct {
 }
 
 type Runner struct {
-	Client provider.Client
+	Client provider.ModelClient
 	Hooks  Hooks
 }
 
@@ -71,7 +71,6 @@ func (r Runner) Run(ctx context.Context, req RunRequest) (retResult *RunResult, 
 
 	for iteration := 1; iteration <= req.MaxModelCalls; iteration++ {
 		modelReq := provider.ModelRequest{
-			Model:    req.Session.Model,
 			Input:    req.Session.ItemsView(),
 			Tools:    tool.DefinitionsFromTools(req.Tools),
 			Options:  cloneMap(req.Options),

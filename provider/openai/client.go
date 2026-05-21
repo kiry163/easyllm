@@ -2,81 +2,86 @@ package openai
 
 import (
 	"net/http"
-	"strings"
-	"time"
+
+	baseprovider "github.com/kiry163/easyllm/provider"
+	"github.com/kiry163/easyllm/provider/openai/compat"
 )
 
-type transport string
+type Client = compat.Client
+type RetryConfig = compat.RetryConfig
 
-const (
-	transportChat      transport = "chat"
-	transportResponses transport = "responses"
-)
-
-type RetryConfig struct {
-	MaxAttempts    int
-	InitialBackoff time.Duration
-	MaxBackoff     time.Duration
+type Provider struct {
+	apiKey  string
+	baseURL string
+	options []compat.Option
 }
 
-type Option func(*Client)
+type ProviderOption func(*Provider)
 
-type Client struct {
-	apiKey     string
-	baseURL    string
-	httpClient *http.Client
-	retry      RetryConfig
-	transport  transport
+type ChatModelConfig struct {
+	Model       string
+	Temperature *float64
+	TopP        *float64
+	MaxTokens   *int
 }
 
-func WithRetry(config RetryConfig) Option {
-	return func(c *Client) {
-		if config.MaxAttempts > 0 {
-			c.retry.MaxAttempts = config.MaxAttempts
-		}
-		if config.InitialBackoff > 0 {
-			c.retry.InitialBackoff = config.InitialBackoff
-		}
-		if config.MaxBackoff > 0 {
-			c.retry.MaxBackoff = config.MaxBackoff
-		}
-	}
+type ResponsesModelConfig = ChatModelConfig
+
+func WithAPIKey(apiKey string) ProviderOption {
+	return func(p *Provider) { p.apiKey = apiKey }
 }
 
-func WithHTTPClient(client *http.Client) Option {
-	return func(c *Client) {
-		if client != nil {
-			c.httpClient = client
-		}
-	}
+func WithBaseURL(baseURL string) ProviderOption {
+	return func(p *Provider) { p.baseURL = baseURL }
 }
 
-func NewChatClient(apiKey, baseURL string, opts ...Option) *Client {
-	return newClient(apiKey, baseURL, transportChat, opts...)
+func WithRetry(config RetryConfig) ProviderOption {
+	return func(p *Provider) { p.options = append(p.options, compat.WithRetry(config)) }
 }
 
-func NewResponsesClient(apiKey, baseURL string, opts ...Option) *Client {
-	return newClient(apiKey, baseURL, transportResponses, opts...)
+func WithHTTPClient(client *http.Client) ProviderOption {
+	return func(p *Provider) { p.options = append(p.options, compat.WithHTTPClient(client)) }
 }
 
-func newClient(apiKey, baseURL string, transport transport, opts ...Option) *Client {
-	client := &Client{
-		apiKey:  strings.TrimSpace(apiKey),
-		baseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/"),
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-		},
-		retry: RetryConfig{
-			MaxAttempts:    1,
-			InitialBackoff: 100 * time.Millisecond,
-			MaxBackoff:     time.Second,
-		},
-		transport: transport,
-	}
+func WithExtraBody(extra map[string]any) ProviderOption {
+	return func(p *Provider) { p.options = append(p.options, compat.WithExtraBody(extra)) }
+}
+
+func WithDefaultOptions(options map[string]any) ProviderOption {
+	return func(p *Provider) { p.options = append(p.options, compat.WithDefaultOptions(options)) }
+}
+
+func NewProvider(opts ...ProviderOption) *Provider {
+	p := &Provider{}
 	for _, opt := range opts {
 		if opt != nil {
-			opt(client)
+			opt(p)
 		}
 	}
-	return client
+	return p
+}
+
+func (p *Provider) ChatModel(config ChatModelConfig) baseprovider.ModelClient {
+	opts := p.modelOptions(config)
+	return compat.NewChatClient(p.apiKey, p.baseURL, opts...)
+}
+
+func (p *Provider) ResponsesModel(config ResponsesModelConfig) baseprovider.ModelClient {
+	opts := p.modelOptions(ChatModelConfig(config))
+	return compat.NewResponsesClient(p.apiKey, p.baseURL, opts...)
+}
+
+func (p *Provider) modelOptions(config ChatModelConfig) []compat.Option {
+	opts := []compat.Option{compat.WithProviderName("openai"), compat.WithDefaultModel(config.Model)}
+	opts = append(opts, p.options...)
+	if config.Temperature != nil {
+		opts = append(opts, compat.WithTemperature(*config.Temperature))
+	}
+	if config.TopP != nil {
+		opts = append(opts, compat.WithTopP(*config.TopP))
+	}
+	if config.MaxTokens != nil {
+		opts = append(opts, compat.WithMaxTokens(*config.MaxTokens))
+	}
+	return opts
 }
