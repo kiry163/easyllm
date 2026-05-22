@@ -6,10 +6,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/kiry163/easyllm/agent"
+	"github.com/kiry163/easyllm/engine"
 	"github.com/kiry163/easyllm/provider"
 	"github.com/kiry163/easyllm/provider/qwen"
-	"github.com/kiry163/easyllm/runtime"
 	"github.com/kiry163/easyllm/tool"
 )
 
@@ -26,12 +25,12 @@ func (echoClient) Generate(ctx context.Context, req provider.ModelRequest) (*pro
 }
 
 func Example_basicRun() {
-	a := agent.Agent{
-		Instructions: "Answer briefly.",
-		Client:       echoClient{},
-	}
+	rt := engine.New(
+		echoClient{},
+		engine.WithInstructions("Answer briefly."),
+	)
 
-	result, err := a.Run(context.Background(), agent.RunRequest{
+	result, err := rt.Run(context.Background(), engine.RunRequest{
 		Input: "hello",
 	})
 	if err != nil {
@@ -45,17 +44,17 @@ func Example_basicRun() {
 }
 
 func Example_sessionContinuation() {
-	session := runtime.NewSession()
-	a := agent.Agent{Client: echoClient{}}
+	session := engine.NewSession()
+	rt := engine.New(echoClient{})
 
-	first, err := a.Run(context.Background(), agent.RunRequest{
+	first, err := rt.Run(context.Background(), engine.RunRequest{
 		Session: session,
 		Input:   "first",
 	})
 	if err != nil {
 		panic(err)
 	}
-	second, err := a.Run(context.Background(), agent.RunRequest{
+	second, err := rt.Run(context.Background(), engine.RunRequest{
 		Session: session,
 		Input:   "second",
 	})
@@ -99,11 +98,11 @@ func Example_toolCalling() {
 		panic(err)
 	}
 
-	a := agent.Agent{
-		Client: toolCallingClient{},
-		Tools:  []tool.Tool{submitTool},
-	}
-	result, err := a.Run(context.Background(), agent.RunRequest{
+	rt := engine.New(
+		toolCallingClient{},
+		engine.WithTools(submitTool),
+	)
+	result, err := rt.Run(context.Background(), engine.RunRequest{
 		Input: "submit ok",
 	})
 	if err != nil {
@@ -195,14 +194,14 @@ func Example_submitStructuredProfileToMemory() {
 		panic(err)
 	}
 
-	a := agent.Agent{
-		Instructions: "Extract the student profile from the user's self introduction and submit it with the tool.",
-		Client:       profileExtractionClient{},
-		Tools:        []tool.Tool{submitProfile},
-	}
-	result, err := a.Run(context.Background(), agent.RunRequest{
-		Input:             "大家好，我叫小林，是五年级男生。我喜欢足球、机器人和画画。",
-		StopAfterToolCall: true,
+	rt := engine.New(
+		profileExtractionClient{},
+		engine.WithInstructions("Extract the student profile from the user's self introduction and submit it with the tool."),
+		engine.WithTools(submitProfile),
+		engine.WithStopAfterToolCall(true),
+	)
+	result, err := rt.Run(context.Background(), engine.RunRequest{
+		Input: "大家好，我叫小林，是五年级男生。我喜欢足球、机器人和画画。",
 	})
 	if err != nil {
 		panic(err)

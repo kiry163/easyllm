@@ -85,6 +85,12 @@ func TestChatClientRetriesAndNormalizesToolCalls(t *testing.T) {
 	if resp.Usage.TotalTokens != 8 {
 		t.Fatalf("unexpected usage: %+v", resp.Usage)
 	}
+	if resp.Usage.CachedInputTokens != 0 {
+		t.Fatalf("unexpected cached input tokens: %+v", resp.Usage)
+	}
+	if resp.Usage.Details != nil {
+		t.Fatalf("unexpected usage details: %+v", resp.Usage.Details)
+	}
 	if len(resp.Output) != 1 {
 		t.Fatalf("unexpected output count: %d", len(resp.Output))
 	}
@@ -157,6 +163,101 @@ func TestResponsesClientNormalizesAssistantMessage(t *testing.T) {
 	}
 	if len(msg.Content) != 1 || msg.Content[0].Text != "done" {
 		t.Fatalf("unexpected message output: %+v", msg)
+	}
+	if resp.Usage.CachedInputTokens != 0 {
+		t.Fatalf("unexpected cached input tokens: %+v", resp.Usage)
+	}
+	if resp.Usage.Details != nil {
+		t.Fatalf("unexpected usage details: %+v", resp.Usage.Details)
+	}
+}
+
+func TestResponsesClientParsesCachedUsageDetails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id": "resp_123",
+			"output": []map[string]any{
+				{
+					"type": "message",
+					"role": "assistant",
+					"content": []map[string]any{
+						{
+							"type": "output_text",
+							"text": "ok",
+						},
+					},
+				},
+			},
+			"usage": map[string]any{
+				"input_tokens":  10,
+				"output_tokens": 3,
+				"total_tokens":  13,
+				"input_tokens_details": map[string]any{
+					"cached_tokens": 4,
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	openaiProvider := NewProvider(WithAPIKey("token"), WithBaseURL(server.URL))
+	client := openaiProvider.ResponsesModel(ResponsesModelConfig{})
+	resp, err := client.Generate(context.Background(), provider.ModelRequest{
+		Model: "gpt-test",
+		Input: []provider.InputItem{
+			provider.UserMessageItem{
+				Content: []provider.TextPart{{Text: "hello"}},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+	if resp.Usage.CachedInputTokens != 4 {
+		t.Fatalf("unexpected cached tokens: %+v", resp.Usage)
+	}
+}
+
+func TestChatClientParsesCachedUsageDetails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id": "chatcmpl_123",
+			"choices": []map[string]any{
+				{
+					"finish_reason": "stop",
+					"message": map[string]any{
+						"role":    "assistant",
+						"content": "ok",
+					},
+				},
+			},
+			"usage": map[string]any{
+				"prompt_tokens":     8,
+				"completion_tokens": 2,
+				"total_tokens":      10,
+				"prompt_tokens_details": map[string]any{
+					"cached_tokens": 5,
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	openaiProvider := NewProvider(WithAPIKey("token"), WithBaseURL(server.URL))
+	client := openaiProvider.ChatModel(ChatModelConfig{})
+	resp, err := client.Generate(context.Background(), provider.ModelRequest{
+		Model: "gpt-test",
+		Input: []provider.InputItem{
+			provider.UserMessageItem{
+				Content: []provider.TextPart{{Text: "hello"}},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+	if resp.Usage.CachedInputTokens != 5 {
+		t.Fatalf("unexpected cached tokens: %+v", resp.Usage)
 	}
 }
 

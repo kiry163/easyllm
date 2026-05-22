@@ -3,9 +3,11 @@ package provider
 import "github.com/kiry163/easyllm/tool"
 
 type Usage struct {
-	InputTokens  int
-	OutputTokens int
-	TotalTokens  int
+	InputTokens       int
+	OutputTokens      int
+	TotalTokens       int
+	CachedInputTokens int
+	Details           map[string]any
 }
 
 type TextPart struct {

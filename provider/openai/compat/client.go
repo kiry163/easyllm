@@ -352,9 +352,12 @@ func parseChatResponse(r io.Reader) (*provider.ModelResponse, error) {
 			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
 		Usage struct {
-			PromptTokens     int `json:"prompt_tokens"`
-			CompletionTokens int `json:"completion_tokens"`
-			TotalTokens      int `json:"total_tokens"`
+			PromptTokens        int `json:"prompt_tokens"`
+			CompletionTokens    int `json:"completion_tokens"`
+			TotalTokens         int `json:"total_tokens"`
+			PromptTokensDetails struct {
+				CachedTokens int `json:"cached_tokens"`
+			} `json:"prompt_tokens_details"`
 		} `json:"usage"`
 	}
 	if err := json.NewDecoder(r).Decode(&raw); err != nil {
@@ -362,9 +365,10 @@ func parseChatResponse(r io.Reader) (*provider.ModelResponse, error) {
 	}
 	out := &provider.ModelResponse{
 		Usage: provider.Usage{
-			InputTokens:  raw.Usage.PromptTokens,
-			OutputTokens: raw.Usage.CompletionTokens,
-			TotalTokens:  raw.Usage.TotalTokens,
+			InputTokens:       raw.Usage.PromptTokens,
+			OutputTokens:      raw.Usage.CompletionTokens,
+			TotalTokens:       raw.Usage.TotalTokens,
+			CachedInputTokens: raw.Usage.PromptTokensDetails.CachedTokens,
 		},
 	}
 	if len(raw.Choices) == 0 {
@@ -407,9 +411,12 @@ func parseResponsesResponse(r io.Reader) (*provider.ModelResponse, error) {
 			} `json:"content"`
 		} `json:"output"`
 		Usage struct {
-			InputTokens  int `json:"input_tokens"`
-			OutputTokens int `json:"output_tokens"`
-			TotalTokens  int `json:"total_tokens"`
+			InputTokens        int `json:"input_tokens"`
+			OutputTokens       int `json:"output_tokens"`
+			TotalTokens        int `json:"total_tokens"`
+			InputTokensDetails struct {
+				CachedTokens int `json:"cached_tokens"`
+			} `json:"input_tokens_details"`
 		} `json:"usage"`
 	}
 	if err := json.NewDecoder(r).Decode(&raw); err != nil {
@@ -418,9 +425,10 @@ func parseResponsesResponse(r io.Reader) (*provider.ModelResponse, error) {
 	out := &provider.ModelResponse{
 		ResponseID: raw.ID,
 		Usage: provider.Usage{
-			InputTokens:  raw.Usage.InputTokens,
-			OutputTokens: raw.Usage.OutputTokens,
-			TotalTokens:  raw.Usage.TotalTokens,
+			InputTokens:       raw.Usage.InputTokens,
+			OutputTokens:      raw.Usage.OutputTokens,
+			TotalTokens:       raw.Usage.TotalTokens,
+			CachedInputTokens: raw.Usage.InputTokensDetails.CachedTokens,
 		},
 	}
 	for _, item := range raw.Output {

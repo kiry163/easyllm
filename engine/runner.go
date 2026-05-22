@@ -1,4 +1,4 @@
-package runtime
+package engine
 
 import (
 	"context"
@@ -8,14 +8,20 @@ import (
 	"github.com/kiry163/easyllm/tool"
 )
 
-type RunRequest struct {
-	Session           *Session
-	Tools             []tool.Tool
-	Options           map[string]any
-	MaxModelCalls     int
-	StopAfterToolCall bool
-	Metadata          map[string]any
+type runConfig struct {
+	tools             []tool.Tool
+	hooks             Hooks
+	maxModelCalls     int
+	stopAfterToolCall bool
 }
+
+type StopReason string
+
+const (
+	StopReasonStop                   StopReason = "stop"
+	StopReasonStopOnToolResult       StopReason = "stop_on_tool_result"
+	StopReasonModelCallLimitExceeded StopReason = "model_call_limit_exceeded"
+)
 
 type RunResult struct {
 	Session        SessionSnapshot
@@ -23,7 +29,8 @@ type RunResult struct {
 	ModelCallCount int
 	ToolCallCount  int
 	ToolResults    []ToolCallResult
-	StopReason     string
+	StopReason     StopReason
+	Usage          provider.Usage
 }
 
 type ToolCallResult struct {
@@ -32,35 +39,30 @@ type ToolCallResult struct {
 	Err    error
 }
 
-type Runner struct {
-	Client provider.ModelClient
-	Hooks  Hooks
-}
-
-func (r Runner) Run(ctx context.Context, req RunRequest) (retResult *RunResult, retErr error) {
-	if req.Session == nil {
+func run(ctx context.Context, client provider.ModelClient, session *Session, metadata map[string]any, cfg runConfig) (retResult *RunResult, retErr error) {
+	if session == nil {
 		return nil, fmt.Errorf("session is required")
 	}
-	if r.Client == nil {
+	if client == nil {
 		return nil, fmt.Errorf("client is required")
 	}
-	if req.MaxModelCalls <= 0 {
-		req.MaxModelCalls = 3
+	if cfg.maxModelCalls <= 0 {
+		cfg.maxModelCalls = 3
 	}
-	if r.Hooks.OnRunStart != nil {
-		if err := r.Hooks.OnRunStart(RunStartEvent{Session: req.Session.Snapshot(), Metadata: cloneMap(req.Metadata)}); err != nil {
+	if cfg.hooks.OnRunStart != nil {
+		if err := cfg.hooks.OnRunStart(RunStartEvent{Session: session.Snapshot(), Metadata: cloneMap(metadata)}); err != nil {
 			return nil, err
 		}
 	}
 
 	result := &RunResult{}
 	defer func() {
-		if r.Hooks.OnRunFinish != nil {
-			finishErr := r.Hooks.OnRunFinish(RunFinishEvent{
-				Session:  req.Session.Snapshot(),
+		if cfg.hooks.OnRunFinish != nil {
+			finishErr := cfg.hooks.OnRunFinish(RunFinishEvent{
+				Session:  session.Snapshot(),
 				Result:   result,
 				Err:      retErr,
-				Metadata: cloneMap(req.Metadata),
+				Metadata: cloneMap(metadata),
 			})
 			if finishErr != nil && retErr == nil {
 				retErr = finishErr
@@ -68,49 +70,47 @@ func (r Runner) Run(ctx context.Context, req RunRequest) (retResult *RunResult, 
 		}
 	}()
 
-	toolMap := make(map[string]tool.Tool, len(req.Tools))
-	for _, current := range req.Tools {
+	toolMap := make(map[string]tool.Tool, len(cfg.tools))
+	for _, current := range cfg.tools {
 		if current == nil {
 			continue
 		}
 		toolMap[current.Definition().Name] = current
 	}
 
-	for iteration := 1; iteration <= req.MaxModelCalls; iteration++ {
+	for iteration := 1; iteration <= cfg.maxModelCalls; iteration++ {
 		modelReq := provider.ModelRequest{
-			Input:    req.Session.ItemsView(),
-			Tools:    tool.DefinitionsFromTools(req.Tools),
-			Options:  cloneMap(req.Options),
-			Metadata: cloneMap(req.Metadata),
+			Input:    session.ItemsView(),
+			Tools:    tool.DefinitionsFromTools(cfg.tools),
+			Metadata: cloneMap(metadata),
 		}
-		if r.Hooks.OnModelRequest != nil {
-			if err := r.Hooks.OnModelRequest(ModelRequestEvent{
-				Session:  req.Session.Snapshot(),
+		if cfg.hooks.OnModelRequest != nil {
+			if err := cfg.hooks.OnModelRequest(ModelRequestEvent{
+				Session:  session.Snapshot(),
 				Request:  modelReq,
-				Metadata: cloneMap(req.Metadata),
+				Metadata: cloneMap(metadata),
 			}); err != nil {
 				retErr = err
 				return nil, retErr
 			}
 		}
-		resp, err := r.Client.Generate(ctx, modelReq)
+		resp, err := client.Generate(ctx, modelReq)
 		if err != nil {
 			retErr = err
 			return nil, retErr
 		}
 		result.ModelCallCount++
-		req.Session.Iteration = iteration
-		req.Session.LastResponse = resp
-		req.Session.Usage.InputTokens += resp.Usage.InputTokens
-		req.Session.Usage.OutputTokens += resp.Usage.OutputTokens
-		req.Session.Usage.TotalTokens += resp.Usage.TotalTokens
+		session.Iteration = iteration
+		session.LastResponse = resp
+		addUsage(&session.Usage, resp.Usage)
+		addUsage(&result.Usage, resp.Usage)
 
-		req.Session.AppendItems(outputItemsToInputItems(resp.Output)...)
-		if r.Hooks.OnModelResponse != nil {
-			if err := r.Hooks.OnModelResponse(ModelResponseEvent{
-				Session:  req.Session.Snapshot(),
+		session.AppendItems(outputItemsToInputItems(resp.Output)...)
+		if cfg.hooks.OnModelResponse != nil {
+			if err := cfg.hooks.OnModelResponse(ModelResponseEvent{
+				Session:  session.Snapshot(),
 				Response: *resp,
-				Metadata: cloneMap(req.Metadata),
+				Metadata: cloneMap(metadata),
 			}); err != nil {
 				retErr = err
 				return nil, retErr
@@ -127,11 +127,11 @@ func (r Runner) Run(ctx context.Context, req RunRequest) (retResult *RunResult, 
 			case provider.ToolCallOutput:
 				hasToolCalls = true
 				result.ToolCallCount++
-				if r.Hooks.OnToolCallStart != nil {
-					if err := r.Hooks.OnToolCallStart(ToolCallStartEvent{
-						Session:  req.Session.Snapshot(),
+				if cfg.hooks.OnToolCallStart != nil {
+					if err := cfg.hooks.OnToolCallStart(ToolCallStartEvent{
+						Session:  session.Snapshot(),
 						Call:     out,
-						Metadata: cloneMap(req.Metadata),
+						Metadata: cloneMap(metadata),
 					}); err != nil {
 						retErr = err
 						return nil, retErr
@@ -145,17 +145,17 @@ func (r Runner) Run(ctx context.Context, req RunRequest) (retResult *RunResult, 
 						"tool":    out.Name,
 						"message": fmt.Sprintf("tool %q not found", out.Name),
 					})
-					req.Session.AppendItems(provider.ToolResultItem{
+					session.AppendItems(provider.ToolResultItem{
 						CallID:  out.CallID,
 						Name:    out.Name,
 						Content: tool.EncodeToolError(out.Name, toolErr),
 					})
-					if r.Hooks.OnToolCallFinish != nil {
-						if err := r.Hooks.OnToolCallFinish(ToolCallFinishEvent{
-							Session:  req.Session.Snapshot(),
+					if cfg.hooks.OnToolCallFinish != nil {
+						if err := cfg.hooks.OnToolCallFinish(ToolCallFinishEvent{
+							Session:  session.Snapshot(),
 							Call:     out,
 							Err:      toolErr,
-							Metadata: cloneMap(req.Metadata),
+							Metadata: cloneMap(metadata),
 						}); err != nil {
 							retErr = err
 							return nil, retErr
@@ -167,7 +167,7 @@ func (r Runner) Run(ctx context.Context, req RunRequest) (retResult *RunResult, 
 					CallID:    out.CallID,
 					Name:      out.Name,
 					Iteration: iteration,
-					Metadata:  cloneMap(req.Metadata),
+					Metadata:  cloneMap(metadata),
 				}, out.Arguments)
 				result.ToolResults = append(result.ToolResults, ToolCallResult{
 					Call:   out,
@@ -180,16 +180,16 @@ func (r Runner) Run(ctx context.Context, req RunRequest) (retResult *RunResult, 
 				} else {
 					message = tool.EncodeToolSuccess(out.Name, outcome)
 				}
-				req.Session.AppendItems(provider.ToolResultItem{
+				session.AppendItems(provider.ToolResultItem{
 					CallID:  out.CallID,
 					Name:    out.Name,
 					Content: message,
 				})
-				if r.Hooks.OnToolCallFinish != nil {
+				if cfg.hooks.OnToolCallFinish != nil {
 					event := ToolCallFinishEvent{
-						Session:  req.Session.Snapshot(),
+						Session:  session.Snapshot(),
 						Call:     out,
-						Metadata: cloneMap(req.Metadata),
+						Metadata: cloneMap(metadata),
 					}
 					if invokeErr != nil {
 						event.Err = invokeErr
@@ -197,14 +197,14 @@ func (r Runner) Run(ctx context.Context, req RunRequest) (retResult *RunResult, 
 						copyOutcome := outcome
 						event.Result = &copyOutcome
 					}
-					if err := r.Hooks.OnToolCallFinish(event); err != nil {
+					if err := cfg.hooks.OnToolCallFinish(event); err != nil {
 						retErr = err
 						return nil, retErr
 					}
 				}
-				if invokeErr == nil && req.StopAfterToolCall {
-					result.StopReason = "stop_on_tool_result"
-					result.Session = req.Session.Snapshot()
+				if invokeErr == nil && cfg.stopAfterToolCall {
+					result.StopReason = StopReasonStopOnToolResult
+					result.Session = session.Snapshot()
 					retResult = result
 					return retResult, nil
 				}
@@ -212,15 +212,15 @@ func (r Runner) Run(ctx context.Context, req RunRequest) (retResult *RunResult, 
 		}
 
 		if !hasToolCalls {
-			result.StopReason = "stop"
-			result.Session = req.Session.Snapshot()
+			result.StopReason = StopReasonStop
+			result.Session = session.Snapshot()
 			retResult = result
 			return retResult, nil
 		}
 	}
 
-	result.StopReason = "model_call_limit_exceeded"
-	result.Session = req.Session.Snapshot()
+	result.StopReason = StopReasonModelCallLimitExceeded
+	result.Session = session.Snapshot()
 	retResult = result
 	return retResult, nil
 }
@@ -247,4 +247,20 @@ func outputItemsToInputItems(items []provider.OutputItem) []provider.InputItem {
 		}
 	}
 	return out
+}
+
+func addUsage(dst *provider.Usage, src provider.Usage) {
+	dst.InputTokens += src.InputTokens
+	dst.OutputTokens += src.OutputTokens
+	dst.TotalTokens += src.TotalTokens
+	dst.CachedInputTokens += src.CachedInputTokens
+	if len(src.Details) == 0 {
+		return
+	}
+	if dst.Details == nil {
+		dst.Details = make(map[string]any, len(src.Details))
+	}
+	for key, value := range src.Details {
+		dst.Details[key] = value
+	}
 }

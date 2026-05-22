@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/kiry163/easyllm/agent"
+	"github.com/kiry163/easyllm/engine"
 	"github.com/kiry163/easyllm/provider"
 	"github.com/kiry163/easyllm/provider/qwen"
 	"github.com/kiry163/easyllm/tool"
@@ -45,12 +45,12 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	if err != nil {
 		return err
 	}
-	a := agent.Agent{
-		Instructions: cfg.Instructions,
-		Client:       client,
-		Tools:        []tool.Tool{weatherTool()},
-	}
-	result, err := a.Run(ctx, agent.RunRequest{Input: cfg.Prompt})
+	rt := engine.New(
+		client,
+		engine.WithInstructions(cfg.Instructions),
+		engine.WithTools(weatherTool()),
+	)
+	result, err := rt.Run(ctx, engine.RunRequest{Input: cfg.Prompt})
 	if err != nil {
 		return err
 	}
