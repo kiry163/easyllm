@@ -15,6 +15,10 @@ type toolTag struct {
 	Enum        []any
 	Minimum     *float64
 	Maximum     *float64
+	MinLength   *int
+	MaxLength   *int
+	MinItems    *int
+	MaxItems    *int
 }
 
 func SchemaFor[T any]() (map[string]any, error) {
@@ -57,6 +61,18 @@ func schemaForType(typ reflect.Type, topLevel bool) (map[string]any, error) {
 			}
 			if tag.Maximum != nil {
 				fieldSchema["maximum"] = *tag.Maximum
+			}
+			if tag.MinLength != nil {
+				fieldSchema["minLength"] = *tag.MinLength
+			}
+			if tag.MaxLength != nil {
+				fieldSchema["maxLength"] = *tag.MaxLength
+			}
+			if tag.MinItems != nil {
+				fieldSchema["minItems"] = *tag.MinItems
+			}
+			if tag.MaxItems != nil {
+				fieldSchema["maxItems"] = *tag.MaxItems
 			}
 			properties[name] = fieldSchema
 			if tag.Required {
@@ -122,6 +138,22 @@ func parseToolTag(field reflect.StructField) toolTag {
 			if value, ok := parseNumberTag(strings.TrimSpace(strings.TrimPrefix(part, "maximum="))); ok {
 				out.Maximum = &value
 			}
+		case strings.HasPrefix(part, "minLength="):
+			if value, ok := parseIntTag(strings.TrimSpace(strings.TrimPrefix(part, "minLength="))); ok {
+				out.MinLength = &value
+			}
+		case strings.HasPrefix(part, "maxLength="):
+			if value, ok := parseIntTag(strings.TrimSpace(strings.TrimPrefix(part, "maxLength="))); ok {
+				out.MaxLength = &value
+			}
+		case strings.HasPrefix(part, "minItems="):
+			if value, ok := parseIntTag(strings.TrimSpace(strings.TrimPrefix(part, "minItems="))); ok {
+				out.MinItems = &value
+			}
+		case strings.HasPrefix(part, "maxItems="):
+			if value, ok := parseIntTag(strings.TrimSpace(strings.TrimPrefix(part, "maxItems="))); ok {
+				out.MaxItems = &value
+			}
 		}
 	}
 	return out
@@ -148,6 +180,17 @@ func parseNumberTag(raw string) (float64, bool) {
 		return 0, false
 	}
 	value, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return 0, false
+	}
+	return value, true
+}
+
+func parseIntTag(raw string) (int, bool) {
+	if raw == "" {
+		return 0, false
+	}
+	value, err := strconv.Atoi(raw)
 	if err != nil {
 		return 0, false
 	}

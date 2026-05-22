@@ -22,7 +22,14 @@ type RunResult struct {
 	OutputText     string
 	ModelCallCount int
 	ToolCallCount  int
+	ToolResults    []ToolCallResult
 	StopReason     string
+}
+
+type ToolCallResult struct {
+	Call   provider.ToolCallOutput
+	Result tool.Result
+	Err    error
 }
 
 type Runner struct {
@@ -162,6 +169,11 @@ func (r Runner) Run(ctx context.Context, req RunRequest) (retResult *RunResult, 
 					Iteration: iteration,
 					Metadata:  cloneMap(req.Metadata),
 				}, out.Arguments)
+				result.ToolResults = append(result.ToolResults, ToolCallResult{
+					Call:   out,
+					Result: outcome,
+					Err:    invokeErr,
+				})
 				message := ""
 				if invokeErr != nil {
 					message = tool.EncodeToolError(out.Name, invokeErr)

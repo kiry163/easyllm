@@ -1,15 +1,21 @@
 package qwen
 
 import (
+	"net/http"
+	"time"
+
 	baseprovider "github.com/kiry163/easyllm/provider"
 	"github.com/kiry163/easyllm/provider/openai/compat"
 )
 
 const DefaultBaseURL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
+type RetryConfig = compat.RetryConfig
+
 type Provider struct {
 	apiKey  string
 	baseURL string
+	options []compat.Option
 }
 
 type ProviderOption func(*Provider)
@@ -30,6 +36,18 @@ func WithAPIKey(apiKey string) ProviderOption {
 
 func WithBaseURL(baseURL string) ProviderOption {
 	return func(p *Provider) { p.baseURL = baseURL }
+}
+
+func WithRetry(config RetryConfig) ProviderOption {
+	return func(p *Provider) { p.options = append(p.options, compat.WithRetry(config)) }
+}
+
+func WithHTTPClient(client *http.Client) ProviderOption {
+	return func(p *Provider) { p.options = append(p.options, compat.WithHTTPClient(client)) }
+}
+
+func WithTimeout(timeout time.Duration) ProviderOption {
+	return func(p *Provider) { p.options = append(p.options, compat.WithTimeout(timeout)) }
 }
 
 func NewProvider(opts ...ProviderOption) *Provider {
@@ -62,6 +80,7 @@ func (p *Provider) model(config ChatModelConfig, transport compat.Transport) bas
 		compat.WithDefaultModel(config.Model),
 		compat.WithExtraBody(extraBody),
 	}
+	compatOpts = append(compatOpts, p.options...)
 	if config.Temperature != nil {
 		compatOpts = append(compatOpts, compat.WithTemperature(*config.Temperature))
 	}

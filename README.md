@@ -17,6 +17,7 @@ Implemented packages:
 - `provider`: provider-neutral request, response, and `ModelClient` interface.
 - `provider/openai`: OpenAI provider constructors.
 - `provider/qwen`: Qwen provider constructors backed by DashScope OpenAI-compatible APIs.
+- `provider/deepseek`: DeepSeek provider constructors backed by DeepSeek OpenAI-compatible APIs.
 - `provider/openai/compat`: reusable OpenAI-compatible protocol base.
 - `agent`: thin agent facade over the runtime.
 - `runtime`: in-memory session and tool-calling execution loop.
@@ -67,7 +68,8 @@ func main() {
 	}
 
 	result, err := a.Run(context.Background(), agent.RunRequest{
-		Input: "用一句话解释递归。",
+		Input:         "用一句话解释递归。",
+		MaxModelCalls: 3,
 	})
 	if err != nil {
 		panic(err)
@@ -99,6 +101,44 @@ func main() {
 
 	model := p.ChatModel(openai.ChatModelConfig{
 		Model: "gpt-4.1-mini",
+	})
+
+	a := agent.Agent{
+		Client: model,
+	}
+
+result, err := a.Run(context.Background(), agent.RunRequest{
+	Input: "Say hello in one sentence.",
+})
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println(result.OutputText)
+}
+```
+
+## Quick Start: DeepSeek
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+
+	"github.com/kiry163/easyllm/agent"
+	"github.com/kiry163/easyllm/provider/deepseek"
+)
+
+func main() {
+	p := deepseek.NewProvider(
+		deepseek.WithAPIKey(os.Getenv("DEEPSEEK_API_KEY")),
+	)
+
+	model := p.ChatModel(deepseek.ChatModelConfig{
+		Model: "deepseek-v4-flash",
 	})
 
 	a := agent.Agent{
@@ -220,6 +260,8 @@ Providers are created with vendor connection settings:
 p := qwen.NewProvider(
 	qwen.WithAPIKey(os.Getenv("DASHSCOPE_API_KEY")),
 	qwen.WithBaseURL(qwen.DefaultBaseURL),
+	qwen.WithTimeout(30 * time.Second),
+	qwen.WithRetry(qwen.RetryConfig{MaxAttempts: 2}),
 )
 ```
 
@@ -230,6 +272,12 @@ model := p.ChatModel(qwen.ChatModelConfig{
 	Model: "qwen-plus",
 })
 ```
+
+Runtime and provider defaults are intentionally conservative:
+
+- `agent.RunRequest.MaxModelCalls` defaults to `3` when unset.
+- OpenAI-compatible providers use a `30s` HTTP timeout by default.
+- Retry defaults to one attempt unless `WithRetry` is configured.
 
 This avoids guessing behavior from model names. If a provider has different model families or transports, expose a different constructor such as `ChatModel`, `ResponsesModel`, `VisionModel`, or `ImageModel`.
 

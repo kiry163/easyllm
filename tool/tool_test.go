@@ -55,6 +55,17 @@ func TestNewUsesToolMetadataMethods(t *testing.T) {
 	}
 }
 
+func TestNewSupportsStrictOption(t *testing.T) {
+	submitTool, err := New[submitArgs](submitRunner{}, WithStrict(true))
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+	def := submitTool.Definition()
+	if def.Strict == nil || *def.Strict != true {
+		t.Fatalf("expected strict=true, got %#v", def.Strict)
+	}
+}
+
 func TestSchemaForSupportsEnumRangeAndClosedObjects(t *testing.T) {
 	type forecastArgs struct {
 		Unit string `tool:"name=unit,required,desc=Temperature unit,enum=celsius|fahrenheit"`
@@ -93,6 +104,36 @@ func TestSchemaForSupportsEnumRangeAndClosedObjects(t *testing.T) {
 	}
 	if days["minimum"] != float64(1) || days["maximum"] != float64(10) {
 		t.Fatalf("unexpected range: minimum=%#v maximum=%#v", days["minimum"], days["maximum"])
+	}
+}
+
+func TestSchemaForSupportsStringAndArrayLengthConstraints(t *testing.T) {
+	type profileArgs struct {
+		Nickname string   `tool:"name=nickname,required,minLength=2,maxLength=12"`
+		Hobbies  []string `tool:"name=hobbies,required,minItems=1,maxItems=5"`
+	}
+
+	schema, err := SchemaFor[profileArgs]()
+	if err != nil {
+		t.Fatalf("SchemaFor returned error: %v", err)
+	}
+	properties, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected properties: %#v", schema["properties"])
+	}
+	nickname, ok := properties["nickname"].(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected nickname schema: %#v", properties["nickname"])
+	}
+	if nickname["minLength"] != 2 || nickname["maxLength"] != 12 {
+		t.Fatalf("unexpected string length constraints: minLength=%#v maxLength=%#v", nickname["minLength"], nickname["maxLength"])
+	}
+	hobbies, ok := properties["hobbies"].(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected hobbies schema: %#v", properties["hobbies"])
+	}
+	if hobbies["minItems"] != 1 || hobbies["maxItems"] != 5 {
+		t.Fatalf("unexpected array length constraints: minItems=%#v maxItems=%#v", hobbies["minItems"], hobbies["maxItems"])
 	}
 }
 
@@ -144,6 +185,64 @@ func TestBindArgsValidatesEnumRangeAndUnknownFields(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := BindArgs[forecastArgs](tt.raw)
+			if err == nil {
+				t.Fatalf("expected error")
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("expected error containing %q, got %q", tt.wantErr, err.Error())
+			}
+		})
+	}
+}
+
+func TestBindArgsValidatesStringAndArrayLengthConstraints(t *testing.T) {
+	type profileArgs struct {
+		Nickname string   `tool:"name=nickname,required,minLength=2,maxLength=12"`
+		Hobbies  []string `tool:"name=hobbies,required,minItems=1,maxItems=2"`
+	}
+
+	tests := []struct {
+		name    string
+		raw     map[string]any
+		wantErr string
+	}{
+		{
+			name: "string minLength",
+			raw: map[string]any{
+				"nickname": "A",
+				"hobbies":  []any{"football"},
+			},
+			wantErr: "nickname length must be >= 2",
+		},
+		{
+			name: "string maxLength",
+			raw: map[string]any{
+				"nickname": "abcdefghijklmn",
+				"hobbies":  []any{"football"},
+			},
+			wantErr: "nickname length must be <= 12",
+		},
+		{
+			name: "array minItems",
+			raw: map[string]any{
+				"nickname": "Alice",
+				"hobbies":  []any{},
+			},
+			wantErr: "hobbies item count must be >= 1",
+		},
+		{
+			name: "array maxItems",
+			raw: map[string]any{
+				"nickname": "Alice",
+				"hobbies":  []any{"football", "painting", "robotics"},
+			},
+			wantErr: "hobbies item count must be <= 2",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := BindArgs[profileArgs](tt.raw)
 			if err == nil {
 				t.Fatalf("expected error")
 			}

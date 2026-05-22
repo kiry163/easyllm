@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/kiry163/easyllm/agent"
 	"github.com/kiry163/easyllm/provider"
@@ -115,6 +116,108 @@ func Example_toolCalling() {
 	// Output:
 	// tool result received
 	// stop
+}
+
+type profileExtractionClient struct{}
+
+func (profileExtractionClient) Generate(ctx context.Context, req provider.ModelRequest) (*provider.ModelResponse, error) {
+	for _, item := range req.Input {
+		if _, ok := item.(provider.ToolResultItem); ok {
+			return messageResponse("profile submitted"), nil
+		}
+	}
+	return &provider.ModelResponse{
+		Output: []provider.OutputItem{
+			provider.ToolCallOutput{
+				CallID: "call_profile_1",
+				Name:   "submit_student_profile",
+				Arguments: map[string]any{
+					"nickname": "小林",
+					"grade":    "五年级",
+					"gender":   "男",
+					"hobbies":  []any{"足球", "机器人", "画画"},
+				},
+			},
+		},
+		FinishReason: "tool_calls",
+	}, nil
+}
+
+type studentProfile struct {
+	Nickname string
+	Grade    string
+	Gender   string
+	Hobbies  []string
+}
+
+type profileStore struct {
+	Profile studentProfile
+}
+
+type submitProfileArgs struct {
+	Nickname string   `tool:"name=nickname,required,desc=Student nickname"`
+	Grade    string   `tool:"name=grade,required,desc=Student grade"`
+	Gender   string   `tool:"name=gender,required,desc=Student gender,enum=男|女|未说明"`
+	Hobbies  []string `tool:"name=hobbies,required,desc=Student hobbies"`
+}
+
+type submitProfileTool struct {
+	store *profileStore
+}
+
+func (submitProfileTool) Name() string {
+	return "submit_student_profile"
+}
+
+func (submitProfileTool) Description() string {
+	return "Submit a structured student profile extracted from the user's self introduction"
+}
+
+func (t submitProfileTool) Run(ctx context.Context, call tool.CallContext, args submitProfileArgs) (tool.Result, error) {
+	t.store.Profile = studentProfile{
+		Nickname: args.Nickname,
+		Grade:    args.Grade,
+		Gender:   args.Gender,
+		Hobbies:  args.Hobbies,
+	}
+	return tool.Result{
+		Message: "student profile submitted",
+		Data: map[string]any{
+			"profile": t.store.Profile,
+		},
+	}, nil
+}
+
+func Example_submitStructuredProfileToMemory() {
+	store := &profileStore{}
+	submitProfile, err := tool.New[submitProfileArgs](submitProfileTool{store: store})
+	if err != nil {
+		panic(err)
+	}
+
+	a := agent.Agent{
+		Instructions: "Extract the student profile from the user's self introduction and submit it with the tool.",
+		Client:       profileExtractionClient{},
+		Tools:        []tool.Tool{submitProfile},
+	}
+	result, err := a.Run(context.Background(), agent.RunRequest{
+		Input:             "大家好，我叫小林，是五年级男生。我喜欢足球、机器人和画画。",
+		StopAfterToolCall: true,
+	})
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println(result.StopReason)
+	fmt.Println(result.ToolResults[0].Call.Name)
+	fmt.Printf("%s %s %s\n", store.Profile.Nickname, store.Profile.Grade, store.Profile.Gender)
+	fmt.Println(strings.Join(store.Profile.Hobbies, ","))
+
+	// Output:
+	// stop_on_tool_result
+	// submit_student_profile
+	// 小林 五年级 男
+	// 足球,机器人,画画
 }
 
 type submitTool struct {

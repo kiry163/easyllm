@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/kiry163/easyllm/provider"
 	"github.com/kiry163/easyllm/tool"
@@ -244,6 +245,36 @@ func TestChatClientUsesDefaultSamplingOptions(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("Generate returned error: %v", err)
+	}
+}
+
+func TestProviderSupportsTimeoutOption(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(50 * time.Millisecond)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{
+					"message":       map[string]any{"content": "done"},
+					"finish_reason": "stop",
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	openaiProvider := NewProvider(
+		WithAPIKey("token"),
+		WithBaseURL(server.URL),
+		WithTimeout(10*time.Millisecond),
+	)
+	client := openaiProvider.ChatModel(ChatModelConfig{Model: "gpt-test"})
+	_, err := client.Generate(context.Background(), provider.ModelRequest{
+		Input: []provider.InputItem{
+			provider.UserMessageItem{Content: []provider.TextPart{{Text: "hello"}}},
+		},
+	})
+	if err == nil {
+		t.Fatalf("expected timeout error")
 	}
 }
 

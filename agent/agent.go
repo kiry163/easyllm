@@ -19,13 +19,16 @@ type RunRequest struct {
 	Session           *runtime.Session
 	Input             string
 	Metadata          map[string]any
+	MaxModelCalls     int
 	StopAfterToolCall bool
 }
 
 type RunResult struct {
-	Session    runtime.SessionSnapshot
-	OutputText string
-	StopReason string
+	Session        runtime.SessionSnapshot
+	OutputText     string
+	ModelCallCount int
+	ToolResults    []runtime.ToolCallResult
+	StopReason     string
 }
 
 func (a Agent) Run(ctx context.Context, req RunRequest) (*RunResult, error) {
@@ -48,7 +51,7 @@ func (a Agent) Run(ctx context.Context, req RunRequest) (*RunResult, error) {
 	result, err := runner.Run(ctx, runtime.RunRequest{
 		Session:           session,
 		Tools:             a.Tools,
-		MaxModelCalls:     3,
+		MaxModelCalls:     req.MaxModelCalls,
 		StopAfterToolCall: req.StopAfterToolCall,
 		Metadata:          req.Metadata,
 	})
@@ -56,8 +59,10 @@ func (a Agent) Run(ctx context.Context, req RunRequest) (*RunResult, error) {
 		return nil, err
 	}
 	return &RunResult{
-		Session:    result.Session,
-		OutputText: result.OutputText,
-		StopReason: result.StopReason,
+		Session:        result.Session,
+		OutputText:     result.OutputText,
+		ModelCallCount: result.ModelCallCount,
+		ToolResults:    result.ToolResults,
+		StopReason:     result.StopReason,
 	}, nil
 }

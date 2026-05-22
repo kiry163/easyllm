@@ -45,18 +45,32 @@ type runnableTool[Args any, Runner toolRunner[Args]] struct {
 	runner     Runner
 }
 
-func New[Args any, Runner toolRunner[Args]](runner Runner) (Tool, error) {
+type Option func(*Definition)
+
+func WithStrict(strict bool) Option {
+	return func(def *Definition) {
+		def.Strict = &strict
+	}
+}
+
+func New[Args any, Runner toolRunner[Args]](runner Runner, opts ...Option) (Tool, error) {
 	parameters, err := SchemaFor[Args]()
 	if err != nil {
 		return nil, err
 	}
+	definition := Definition{
+		Name:        runner.Name(),
+		Description: runner.Description(),
+		Parameters:  parameters,
+	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&definition)
+		}
+	}
 	return &runnableTool[Args, Runner]{
-		definition: Definition{
-			Name:        runner.Name(),
-			Description: runner.Description(),
-			Parameters:  parameters,
-		},
-		runner: runner,
+		definition: definition,
+		runner:     runner,
 	}, nil
 }
 

@@ -1,4 +1,4 @@
-package openai
+package deepseek
 
 import (
 	"net/http"
@@ -8,7 +8,8 @@ import (
 	"github.com/kiry163/easyllm/provider/openai/compat"
 )
 
-type Client = compat.Client
+const DefaultBaseURL = "https://api.deepseek.com"
+
 type RetryConfig = compat.RetryConfig
 
 type Provider struct {
@@ -25,8 +26,6 @@ type ChatModelConfig struct {
 	TopP        *float64
 	MaxTokens   *int
 }
-
-type ResponsesModelConfig = ChatModelConfig
 
 func WithAPIKey(apiKey string) ProviderOption {
 	return func(p *Provider) { p.apiKey = apiKey }
@@ -48,16 +47,10 @@ func WithTimeout(timeout time.Duration) ProviderOption {
 	return func(p *Provider) { p.options = append(p.options, compat.WithTimeout(timeout)) }
 }
 
-func WithExtraBody(extra map[string]any) ProviderOption {
-	return func(p *Provider) { p.options = append(p.options, compat.WithExtraBody(extra)) }
-}
-
-func WithDefaultOptions(options map[string]any) ProviderOption {
-	return func(p *Provider) { p.options = append(p.options, compat.WithDefaultOptions(options)) }
-}
-
 func NewProvider(opts ...ProviderOption) *Provider {
-	p := &Provider{}
+	p := &Provider{
+		baseURL: DefaultBaseURL,
+	}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(p)
@@ -67,17 +60,10 @@ func NewProvider(opts ...ProviderOption) *Provider {
 }
 
 func (p *Provider) ChatModel(config ChatModelConfig) baseprovider.ModelClient {
-	opts := p.modelOptions(config)
-	return compat.NewChatClient(p.apiKey, p.baseURL, opts...)
-}
-
-func (p *Provider) ResponsesModel(config ResponsesModelConfig) baseprovider.ModelClient {
-	opts := p.modelOptions(ChatModelConfig(config))
-	return compat.NewResponsesClient(p.apiKey, p.baseURL, opts...)
-}
-
-func (p *Provider) modelOptions(config ChatModelConfig) []compat.Option {
-	opts := []compat.Option{compat.WithProviderName("openai"), compat.WithDefaultModel(config.Model)}
+	opts := []compat.Option{
+		compat.WithProviderName("deepseek"),
+		compat.WithDefaultModel(config.Model),
+	}
 	opts = append(opts, p.options...)
 	if config.Temperature != nil {
 		opts = append(opts, compat.WithTemperature(*config.Temperature))
@@ -88,5 +74,5 @@ func (p *Provider) modelOptions(config ChatModelConfig) []compat.Option {
 	if config.MaxTokens != nil {
 		opts = append(opts, compat.WithMaxTokens(*config.MaxTokens))
 	}
-	return opts
+	return compat.NewChatClient(p.apiKey, p.baseURL, opts...)
 }

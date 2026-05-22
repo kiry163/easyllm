@@ -1,4 +1,4 @@
-package qwen
+package deepseek
 
 import (
 	"context"
@@ -11,18 +11,18 @@ import (
 	"github.com/kiry163/easyllm/provider"
 )
 
-func TestClientUsesProviderOwnedModelAndThinkingDefaults(t *testing.T) {
+func TestClientUsesProviderOwnedModelAndSamplingOptions(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
 		defer r.Body.Close()
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode body: %v", err)
 		}
-		if body["model"] != "qwen-plus" {
+		if body["model"] != "deepseek-v4-flash" {
 			t.Fatalf("unexpected model: %#v", body["model"])
-		}
-		if body["enable_thinking"] != false {
-			t.Fatalf("unexpected enable_thinking: %#v", body["enable_thinking"])
 		}
 		if body["temperature"] != 0.6 {
 			t.Fatalf("unexpected temperature: %#v", body["temperature"])
@@ -44,17 +44,15 @@ func TestClientUsesProviderOwnedModelAndThinkingDefaults(t *testing.T) {
 	}))
 	defer server.Close()
 
-	qwenProvider := NewProvider(
+	deepseekProvider := NewProvider(
 		WithAPIKey("token"),
 		WithBaseURL(server.URL),
 	)
-	thinking := false
 	temperature := 0.6
 	topP := 0.7
 	maxTokens := 512
-	client := qwenProvider.ChatModel(ChatModelConfig{
-		Model:       "qwen-plus",
-		Thinking:    &thinking,
+	client := deepseekProvider.ChatModel(ChatModelConfig{
+		Model:       "deepseek-v4-flash",
 		Temperature: &temperature,
 		TopP:        &topP,
 		MaxTokens:   &maxTokens,
@@ -69,6 +67,9 @@ func TestClientUsesProviderOwnedModelAndThinkingDefaults(t *testing.T) {
 	}
 	if len(resp.Output) != 1 {
 		t.Fatalf("unexpected output count: %d", len(resp.Output))
+	}
+	if resp.Provider != "deepseek" {
+		t.Fatalf("unexpected provider: %q", resp.Provider)
 	}
 }
 
@@ -91,7 +92,7 @@ func TestProviderSupportsRetryOption(t *testing.T) {
 	}))
 	defer server.Close()
 
-	qwenProvider := NewProvider(
+	deepseekProvider := NewProvider(
 		WithAPIKey("token"),
 		WithBaseURL(server.URL),
 		WithRetry(RetryConfig{
@@ -100,7 +101,7 @@ func TestProviderSupportsRetryOption(t *testing.T) {
 			MaxBackoff:     time.Millisecond,
 		}),
 	)
-	client := qwenProvider.ChatModel(ChatModelConfig{Model: "qwen-plus"})
+	client := deepseekProvider.ChatModel(ChatModelConfig{Model: "deepseek-v4-flash"})
 	_, err := client.Generate(context.Background(), provider.ModelRequest{
 		Input: []provider.InputItem{
 			provider.UserMessageItem{Content: []provider.TextPart{{Text: "hello"}}},
@@ -128,12 +129,12 @@ func TestProviderSupportsTimeoutOption(t *testing.T) {
 	}))
 	defer server.Close()
 
-	qwenProvider := NewProvider(
+	deepseekProvider := NewProvider(
 		WithAPIKey("token"),
 		WithBaseURL(server.URL),
 		WithTimeout(10*time.Millisecond),
 	)
-	client := qwenProvider.ChatModel(ChatModelConfig{Model: "qwen-plus"})
+	client := deepseekProvider.ChatModel(ChatModelConfig{Model: "deepseek-v4-flash"})
 	_, err := client.Generate(context.Background(), provider.ModelRequest{
 		Input: []provider.InputItem{
 			provider.UserMessageItem{Content: []provider.TextPart{{Text: "hello"}}},

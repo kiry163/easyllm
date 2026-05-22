@@ -66,6 +66,28 @@ func bindStruct(target reflect.Value, raw map[string]any, path string) error {
 
 func validateConstraints(value reflect.Value, tag toolTag, path string) error {
 	value = derefValue(value)
+	if tag.MinLength != nil || tag.MaxLength != nil {
+		if value.Kind() == reflect.String {
+			length := len([]rune(value.String()))
+			if tag.MinLength != nil && length < *tag.MinLength {
+				return fmt.Errorf("%s length must be >= %d", path, *tag.MinLength)
+			}
+			if tag.MaxLength != nil && length > *tag.MaxLength {
+				return fmt.Errorf("%s length must be <= %d", path, *tag.MaxLength)
+			}
+		}
+	}
+	if tag.MinItems != nil || tag.MaxItems != nil {
+		if value.Kind() == reflect.Slice || value.Kind() == reflect.Array {
+			length := value.Len()
+			if tag.MinItems != nil && length < *tag.MinItems {
+				return fmt.Errorf("%s item count must be >= %d", path, *tag.MinItems)
+			}
+			if tag.MaxItems != nil && length > *tag.MaxItems {
+				return fmt.Errorf("%s item count must be <= %d", path, *tag.MaxItems)
+			}
+		}
+	}
 	if len(tag.Enum) > 0 {
 		current := fmt.Sprint(value.Interface())
 		matched := false

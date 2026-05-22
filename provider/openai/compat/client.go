@@ -63,6 +63,14 @@ func WithHTTPClient(client *http.Client) Option {
 	}
 }
 
+func WithTimeout(timeout time.Duration) Option {
+	return func(c *Client) {
+		if timeout > 0 {
+			c.httpClient.Timeout = timeout
+		}
+	}
+}
+
 func WithDefaultModel(model string) Option {
 	return func(c *Client) {
 		c.defaultModel = strings.TrimSpace(model)
