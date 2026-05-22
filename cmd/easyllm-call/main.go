@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/kiry163/easyllm"
 	"github.com/kiry163/easyllm/engine"
-	"github.com/kiry163/easyllm/provider"
 	"github.com/kiry163/easyllm/provider/qwen"
 	"github.com/kiry163/easyllm/tool"
 )
@@ -114,37 +114,27 @@ func parseConfig(args []string, getenv func(string) string) (config, error) {
 	return cfg, nil
 }
 
-func buildClient(cfg config) (provider.ModelClient, error) {
-	qwenProvider := qwen.NewProvider(
-		qwen.WithAPIKey(cfg.APIKey),
-		qwen.WithBaseURL(cfg.BaseURL),
-	)
-	config := qwenChatModelConfig(cfg)
-	switch cfg.Transport {
-	case "responses":
-		return qwenProvider.ResponsesModel(qwen.ResponsesModelConfig(config)), nil
-	case "chat":
-		return qwenProvider.ChatModel(config), nil
-	default:
-		return nil, fmt.Errorf("unsupported transport %q", cfg.Transport)
+func buildClient(cfg config) (easyllm.Client, error) {
+	clientConfig := easyllm.Config{
+		Provider:  "qwen",
+		APIKey:    cfg.APIKey,
+		BaseURL:   cfg.BaseURL,
+		Model:     cfg.Model,
+		Transport: cfg.Transport,
+		Options: map[string]any{
+			"thinking": cfg.Thinking,
+		},
 	}
-}
-
-func qwenChatModelConfig(cfg config) qwen.ChatModelConfig {
-	config := qwen.ChatModelConfig{
-		Model: cfg.Model,
-	}
-	config.Thinking = &cfg.Thinking
 	if cfg.Temperature > 0 {
-		config.Temperature = &cfg.Temperature
+		clientConfig.Temperature = &cfg.Temperature
 	}
 	if cfg.TopP > 0 {
-		config.TopP = &cfg.TopP
+		clientConfig.TopP = &cfg.TopP
 	}
 	if cfg.MaxTokens > 0 {
-		config.MaxTokens = &cfg.MaxTokens
+		clientConfig.MaxTokens = &cfg.MaxTokens
 	}
-	return config
+	return easyllm.NewClient(clientConfig)
 }
 
 type weatherArgs struct {

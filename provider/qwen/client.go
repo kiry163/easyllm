@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	baseprovider "github.com/kiry163/easyllm/provider"
+	"github.com/kiry163/easyllm/provider"
 	"github.com/kiry163/easyllm/provider/openai/compat"
 )
 
@@ -20,7 +20,7 @@ type Provider struct {
 
 type ProviderOption func(*Provider)
 
-type ChatModelConfig struct {
+type ChatClientConfig struct {
 	Model       string
 	Thinking    *bool
 	Temperature *float64
@@ -28,7 +28,7 @@ type ChatModelConfig struct {
 	MaxTokens   *int
 }
 
-type ResponsesModelConfig = ChatModelConfig
+type ResponsesClientConfig = ChatClientConfig
 
 func WithAPIKey(apiKey string) ProviderOption {
 	return func(p *Provider) { p.apiKey = apiKey }
@@ -62,15 +62,15 @@ func NewProvider(opts ...ProviderOption) *Provider {
 	return p
 }
 
-func (p *Provider) ChatModel(config ChatModelConfig) baseprovider.ModelClient {
+func (p *Provider) ChatClient(config ChatClientConfig) provider.Client {
 	return p.model(config, compat.TransportChat)
 }
 
-func (p *Provider) ResponsesModel(config ResponsesModelConfig) baseprovider.ModelClient {
-	return p.model(ChatModelConfig(config), compat.TransportResponses)
+func (p *Provider) ResponsesClient(config ResponsesClientConfig) provider.Client {
+	return p.model(ChatClientConfig(config), compat.TransportResponses)
 }
 
-func (p *Provider) model(config ChatModelConfig, transport compat.Transport) baseprovider.ModelClient {
+func (p *Provider) model(config ChatClientConfig, transport compat.Transport) provider.Client {
 	extraBody := map[string]any{}
 	if config.Thinking != nil {
 		extraBody["enable_thinking"] = *config.Thinking

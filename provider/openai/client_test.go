@@ -64,7 +64,7 @@ func TestChatClientRetriesAndNormalizesToolCalls(t *testing.T) {
 	defer server.Close()
 
 	openaiProvider := NewProvider(WithAPIKey("token"), WithBaseURL(server.URL), WithRetry(RetryConfig{MaxAttempts: 2}))
-	client := openaiProvider.ChatModel(ChatModelConfig{})
+	client := openaiProvider.ChatClient(ChatClientConfig{})
 	resp, err := client.Generate(context.Background(), provider.ModelRequest{
 		Model: "gpt-test",
 		Input: []provider.InputItem{
@@ -139,7 +139,7 @@ func TestResponsesClientNormalizesAssistantMessage(t *testing.T) {
 	defer server.Close()
 
 	openaiProvider := NewProvider(WithAPIKey("token"), WithBaseURL(server.URL))
-	client := openaiProvider.ResponsesModel(ResponsesModelConfig{})
+	client := openaiProvider.ResponsesClient(ResponsesClientConfig{})
 	resp, err := client.Generate(context.Background(), provider.ModelRequest{
 		Model: "gpt-test",
 		Input: []provider.InputItem{
@@ -201,7 +201,7 @@ func TestResponsesClientParsesCachedUsageDetails(t *testing.T) {
 	defer server.Close()
 
 	openaiProvider := NewProvider(WithAPIKey("token"), WithBaseURL(server.URL))
-	client := openaiProvider.ResponsesModel(ResponsesModelConfig{})
+	client := openaiProvider.ResponsesClient(ResponsesClientConfig{})
 	resp, err := client.Generate(context.Background(), provider.ModelRequest{
 		Model: "gpt-test",
 		Input: []provider.InputItem{
@@ -244,7 +244,7 @@ func TestChatClientParsesCachedUsageDetails(t *testing.T) {
 	defer server.Close()
 
 	openaiProvider := NewProvider(WithAPIKey("token"), WithBaseURL(server.URL))
-	client := openaiProvider.ChatModel(ChatModelConfig{})
+	client := openaiProvider.ChatClient(ChatClientConfig{})
 	resp, err := client.Generate(context.Background(), provider.ModelRequest{
 		Model: "gpt-test",
 		Input: []provider.InputItem{
@@ -289,7 +289,7 @@ func TestChatClientUsesDefaultModelAndExtraBody(t *testing.T) {
 		WithBaseURL(server.URL),
 		WithExtraBody(map[string]any{"enable_thinking": false}),
 	)
-	client := openaiProvider.ChatModel(ChatModelConfig{Model: "default-model"})
+	client := openaiProvider.ChatClient(ChatClientConfig{Model: "default-model"})
 	resp, err := client.Generate(context.Background(), provider.ModelRequest{
 		Input: []provider.InputItem{
 			provider.UserMessageItem{Content: []provider.TextPart{{Text: "hello"}}},
@@ -333,7 +333,7 @@ func TestChatClientUsesDefaultSamplingOptions(t *testing.T) {
 	temperature := 0.7
 	topP := 0.8
 	maxTokens := 256
-	client := openaiProvider.ChatModel(ChatModelConfig{
+	client := openaiProvider.ChatClient(ChatClientConfig{
 		Model:       "default-model",
 		Temperature: &temperature,
 		TopP:        &topP,
@@ -368,7 +368,7 @@ func TestProviderSupportsTimeoutOption(t *testing.T) {
 		WithBaseURL(server.URL),
 		WithTimeout(10*time.Millisecond),
 	)
-	client := openaiProvider.ChatModel(ChatModelConfig{Model: "gpt-test"})
+	client := openaiProvider.ChatClient(ChatClientConfig{Model: "gpt-test"})
 	_, err := client.Generate(context.Background(), provider.ModelRequest{
 		Input: []provider.InputItem{
 			provider.UserMessageItem{Content: []provider.TextPart{{Text: "hello"}}},
@@ -422,7 +422,7 @@ func TestChatClientRendersToolsAsNestedFunctionDefinitions(t *testing.T) {
 	defer server.Close()
 
 	openaiProvider := NewProvider(WithAPIKey("token"), WithBaseURL(server.URL))
-	client := openaiProvider.ChatModel(ChatModelConfig{Model: "gpt-test"})
+	client := openaiProvider.ChatClient(ChatClientConfig{Model: "gpt-test"})
 	_, err := client.Generate(context.Background(), provider.ModelRequest{
 		Input: []provider.InputItem{
 			provider.UserMessageItem{Content: []provider.TextPart{{Text: "hello"}}},
@@ -487,7 +487,7 @@ func TestResponsesClientRendersToolsAsFlatFunctionDefinitions(t *testing.T) {
 	defer server.Close()
 
 	openaiProvider := NewProvider(WithAPIKey("token"), WithBaseURL(server.URL))
-	client := openaiProvider.ResponsesModel(ResponsesModelConfig{Model: "gpt-test"})
+	client := openaiProvider.ResponsesClient(ResponsesClientConfig{Model: "gpt-test"})
 	_, err := client.Generate(context.Background(), provider.ModelRequest{
 		Input: []provider.InputItem{
 			provider.UserMessageItem{Content: []provider.TextPart{{Text: "hello"}}},

@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	baseprovider "github.com/kiry163/easyllm/provider"
+	"github.com/kiry163/easyllm/provider"
 	"github.com/kiry163/easyllm/provider/openai/compat"
 )
 
@@ -20,7 +20,7 @@ type Provider struct {
 
 type ProviderOption func(*Provider)
 
-type ChatModelConfig struct {
+type ChatClientConfig struct {
 	Model       string
 	Temperature *float64
 	TopP        *float64
@@ -59,7 +59,7 @@ func NewProvider(opts ...ProviderOption) *Provider {
 	return p
 }
 
-func (p *Provider) ChatModel(config ChatModelConfig) baseprovider.ModelClient {
+func (p *Provider) ChatClient(config ChatClientConfig) provider.Client {
 	opts := []compat.Option{
 		compat.WithProviderName("deepseek"),
 		compat.WithDefaultModel(config.Model),

@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"github.com/kiry163/easyllm"
 	"github.com/kiry163/easyllm/provider"
 	"github.com/kiry163/easyllm/tool"
 )
@@ -21,13 +22,13 @@ type RunStartEvent struct {
 
 type ModelRequestEvent struct {
 	Session  SessionSnapshot
-	Request  provider.ModelRequest
+	Request  easyllm.ModelRequest
 	Metadata map[string]any
 }
 
 type ModelResponseEvent struct {
 	Session  SessionSnapshot
-	Response provider.ModelResponse
+	Response easyllm.ModelResponse
 	Metadata map[string]any
 }
 

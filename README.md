@@ -2,22 +2,22 @@
 
 `easyllm` is a lightweight Go engine for building LLM-backed backend workflows with provider-neutral model calls, tool calling, and in-memory sessions.
 
-The current design separates provider connection setup from model configuration:
+The default API is centered on one top-level client constructor:
 
-- **Provider**: vendor connection settings such as API key, base URL, HTTP client, and retry behavior.
-- **Model client**: model name and model-level parameters such as `temperature`, `top_p`, `max_tokens`, and Qwen thinking mode.
-- **Engine**: instructions, tools, session state, hooks, and tool-calling loop execution.
+- **`easyllm.NewClient(...)`**: provider choice, credentials, model selection, transport, and common model parameters.
+- **`engine`**: instructions, tools, session state, hooks, and tool-calling loop execution.
+- **Provider packages**: advanced usage when you need direct vendor control.
 
 ## Status
 
-This project is early-stage. The public API is centered on a single `engine` entrypoint, with provider packages configuring model clients and the engine handling the execution loop.
+This project is early-stage. The public API is centered on a top-level client entrypoint plus a single `engine` runtime entrypoint.
 
 Implemented packages:
 
-- `provider`: provider-neutral request, response, and `ModelClient` interface.
-- `provider/openai`: OpenAI provider constructors.
-- `provider/qwen`: Qwen provider constructors backed by DashScope OpenAI-compatible APIs.
-- `provider/deepseek`: DeepSeek provider constructors backed by DeepSeek OpenAI-compatible APIs.
+- `easyllm`: top-level client construction, provider dispatch, and the `Client` interface.
+- `provider/openai`: advanced OpenAI provider constructors.
+- `provider/qwen`: advanced Qwen provider constructors backed by DashScope OpenAI-compatible APIs.
+- `provider/deepseek`: advanced DeepSeek provider constructors backed by DeepSeek OpenAI-compatible APIs.
 - `provider/openai/compat`: reusable OpenAI-compatible protocol base.
 - `engine`: public execution entrypoint, session types, hooks, and tool-calling loop.
 - `tool`: tool definitions, schema generation, typed argument binding, and JSON repair.
@@ -29,7 +29,7 @@ Implemented packages:
 go get github.com/kiry163/easyllm
 ```
 
-## Quick Start: Qwen
+## Quick Start
 
 ```go
 package main
@@ -39,30 +39,34 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/kiry163/easyllm"
 	"github.com/kiry163/easyllm/engine"
-	"github.com/kiry163/easyllm/provider/qwen"
 )
 
 func main() {
-	p := qwen.NewProvider(
-		qwen.WithAPIKey(os.Getenv("DASHSCOPE_API_KEY")),
-	)
-
-	thinking := false
 	temperature := 0.6
 	topP := 0.7
 	maxTokens := 512
 
-	model := p.ChatModel(qwen.ChatModelConfig{
+	client, err := easyllm.NewClient(easyllm.Config{
+		Provider:    "qwen",
+		APIKey:      os.Getenv("DASHSCOPE_API_KEY"),
+		BaseURL:     "https://dashscope.aliyuncs.com/compatible-mode/v1",
 		Model:       "qwen-plus",
-		Thinking:    &thinking,
+		Transport:   easyllm.TransportChat,
 		Temperature: &temperature,
 		TopP:        &topP,
 		MaxTokens:   &maxTokens,
+		Options: map[string]any{
+			"thinking": false,
+		},
 	})
+	if err != nil {
+		panic(err)
+	}
 
 	rt := engine.New(
-		model,
+		client,
 		engine.WithInstructions("Answer clearly and concisely."),
 	)
 
@@ -77,7 +81,7 @@ func main() {
 }
 ```
 
-## Quick Start: OpenAI
+### OpenAI
 
 ```go
 package main
@@ -87,21 +91,22 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/kiry163/easyllm"
 	"github.com/kiry163/easyllm/engine"
-	"github.com/kiry163/easyllm/provider/openai"
 )
 
 func main() {
-	p := openai.NewProvider(
-		openai.WithAPIKey(os.Getenv("OPENAI_API_KEY")),
-		openai.WithBaseURL("https://api.openai.com/v1"),
-	)
-
-	model := p.ChatModel(openai.ChatModelConfig{
-		Model: "gpt-4.1-mini",
+	client, err := easyllm.NewClient(easyllm.Config{
+		Provider: "openai",
+		APIKey:   os.Getenv("OPENAI_API_KEY"),
+		BaseURL:  "https://api.openai.com/v1",
+		Model:    "gpt-4.1-mini",
 	})
+	if err != nil {
+		panic(err)
+	}
 
-	rt := engine.New(model)
+	rt := engine.New(client)
 
 	result, err := rt.Run(context.Background(), engine.RunRequest{
 		Input: "Say hello in one sentence.",
@@ -114,7 +119,7 @@ func main() {
 }
 ```
 
-## Quick Start: DeepSeek
+### DeepSeek
 
 ```go
 package main
@@ -124,20 +129,21 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/kiry163/easyllm"
 	"github.com/kiry163/easyllm/engine"
-	"github.com/kiry163/easyllm/provider/deepseek"
 )
 
 func main() {
-	p := deepseek.NewProvider(
-		deepseek.WithAPIKey(os.Getenv("DEEPSEEK_API_KEY")),
-	)
-
-	model := p.ChatModel(deepseek.ChatModelConfig{
-		Model: "deepseek-v4-flash",
+	client, err := easyllm.NewClient(easyllm.Config{
+		Provider: "deepseek",
+		APIKey:   os.Getenv("DEEPSEEK_API_KEY"),
+		Model:    "deepseek-v4-flash",
 	})
+	if err != nil {
+		panic(err)
+	}
 
-	rt := engine.New(model)
+	rt := engine.New(client)
 
 	result, err := rt.Run(context.Background(), engine.RunRequest{
 		Input: "Say hello in one sentence.",
@@ -187,7 +193,7 @@ if err != nil {
 }
 
 rt := engine.New(
-	model,
+	client,
 	engine.WithTools(weatherTool),
 )
 ```
@@ -215,16 +221,16 @@ Use `-transport responses` to test the Responses-style adapter.
 
 ```text
 engine.New(...).Run
-  -> provider.ModelClient.Generate
+  -> easyllm.Client.Generate
       -> provider/openai/compat HTTP call
   -> tool.Tool.Invoke
-  -> provider.ModelClient.Generate
+  -> easyllm.Client.Generate
 ```
 
 Important boundaries:
 
 - `engine.Engine.Run` is one engine execution. It may contain multiple model API calls if tools are used.
-- `provider.ModelClient.Generate` is one model call from the runtime perspective. It may retry HTTP requests internally.
+- `easyllm.Client.Generate` is one model call from the runtime perspective. It may retry HTTP requests internally.
 - Provider packages create configured model clients. They do not store session state.
 - `engine.Session` is in-memory only and is not persisted by the library.
 
@@ -252,7 +258,7 @@ type Usage struct {
 
 `RunResult.Usage` is the usage total for the current run. `engine.Session` and `engine.SessionSnapshot` keep cumulative usage across the life of the session.
 
-## Provider Model
+## Advanced Provider Usage
 
 Providers are created with vendor connection settings:
 
@@ -268,7 +274,7 @@ p := qwen.NewProvider(
 Model clients are created from providers with model-level configuration:
 
 ```go
-model := p.ChatModel(qwen.ChatModelConfig{
+client := p.ChatClient(qwen.ChatClientConfig{
 	Model: "qwen-plus",
 })
 ```
@@ -279,7 +285,7 @@ Engine and provider defaults are intentionally conservative:
 - OpenAI-compatible providers use a `30s` HTTP timeout by default.
 - Retry defaults to one attempt unless `WithRetry` is configured.
 
-This avoids guessing behavior from model names. If a provider has different model families or transports, expose a different constructor such as `ChatModel`, `ResponsesModel`, `VisionModel`, or `ImageModel`.
+This avoids guessing behavior from model names. If a provider has different model families or transports, expose a different constructor such as `ChatClient`, `ResponsesClient`, `VisionClient`, or `ImageClient`.
 
 ## Development
 

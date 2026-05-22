@@ -52,7 +52,7 @@ func TestClientUsesProviderOwnedModelAndThinkingDefaults(t *testing.T) {
 	temperature := 0.6
 	topP := 0.7
 	maxTokens := 512
-	client := qwenProvider.ChatModel(ChatModelConfig{
+	client := qwenProvider.ChatClient(ChatClientConfig{
 		Model:       "qwen-plus",
 		Thinking:    &thinking,
 		Temperature: &temperature,
@@ -100,7 +100,7 @@ func TestProviderSupportsRetryOption(t *testing.T) {
 			MaxBackoff:     time.Millisecond,
 		}),
 	)
-	client := qwenProvider.ChatModel(ChatModelConfig{Model: "qwen-plus"})
+	client := qwenProvider.ChatClient(ChatClientConfig{Model: "qwen-plus"})
 	_, err := client.Generate(context.Background(), provider.ModelRequest{
 		Input: []provider.InputItem{
 			provider.UserMessageItem{Content: []provider.TextPart{{Text: "hello"}}},
@@ -133,7 +133,7 @@ func TestProviderSupportsTimeoutOption(t *testing.T) {
 		WithBaseURL(server.URL),
 		WithTimeout(10*time.Millisecond),
 	)
-	client := qwenProvider.ChatModel(ChatModelConfig{Model: "qwen-plus"})
+	client := qwenProvider.ChatClient(ChatClientConfig{Model: "qwen-plus"})
 	_, err := client.Generate(context.Background(), provider.ModelRequest{
 		Input: []provider.InputItem{
 			provider.UserMessageItem{Content: []provider.TextPart{{Text: "hello"}}},

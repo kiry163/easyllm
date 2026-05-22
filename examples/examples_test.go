@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/kiry163/easyllm"
 	"github.com/kiry163/easyllm/engine"
 	"github.com/kiry163/easyllm/provider"
-	"github.com/kiry163/easyllm/provider/qwen"
 	"github.com/kiry163/easyllm/tool"
 )
 
@@ -285,19 +285,21 @@ func Example_schemaTags() {
 	// }
 }
 
-func Example_qwenProviderConfig() {
-	p := qwen.NewProvider(
-		qwen.WithAPIKey("example-key"),
-		qwen.WithBaseURL(qwen.DefaultBaseURL),
-	)
-
-	thinking := false
-	model := p.ChatModel(qwen.ChatModelConfig{
+func Example_newClient() {
+	client, err := easyllm.NewClient(easyllm.Config{
+		Provider: "qwen",
+		APIKey:   "example-key",
+		BaseURL:  "https://dashscope.aliyuncs.com/compatible-mode/v1",
 		Model:    "qwen-plus",
-		Thinking: &thinking,
+		Options: map[string]any{
+			"thinking": false,
+		},
 	})
+	if err != nil {
+		panic(err)
+	}
 
-	fmt.Println(model != nil)
+	fmt.Println(client != nil)
 
 	// Output:
 	// true

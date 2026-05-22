@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	baseprovider "github.com/kiry163/easyllm/provider"
+	"github.com/kiry163/easyllm/provider"
 	"github.com/kiry163/easyllm/provider/openai/compat"
 )
 
@@ -19,14 +19,14 @@ type Provider struct {
 
 type ProviderOption func(*Provider)
 
-type ChatModelConfig struct {
+type ChatClientConfig struct {
 	Model       string
 	Temperature *float64
 	TopP        *float64
 	MaxTokens   *int
 }
 
-type ResponsesModelConfig = ChatModelConfig
+type ResponsesClientConfig = ChatClientConfig
 
 func WithAPIKey(apiKey string) ProviderOption {
 	return func(p *Provider) { p.apiKey = apiKey }
@@ -66,17 +66,17 @@ func NewProvider(opts ...ProviderOption) *Provider {
 	return p
 }
 
-func (p *Provider) ChatModel(config ChatModelConfig) baseprovider.ModelClient {
+func (p *Provider) ChatClient(config ChatClientConfig) provider.Client {
 	opts := p.modelOptions(config)
 	return compat.NewChatClient(p.apiKey, p.baseURL, opts...)
 }
 
-func (p *Provider) ResponsesModel(config ResponsesModelConfig) baseprovider.ModelClient {
-	opts := p.modelOptions(ChatModelConfig(config))
+func (p *Provider) ResponsesClient(config ResponsesClientConfig) provider.Client {
+	opts := p.modelOptions(ChatClientConfig(config))
 	return compat.NewResponsesClient(p.apiKey, p.baseURL, opts...)
 }
 
-func (p *Provider) modelOptions(config ChatModelConfig) []compat.Option {
+func (p *Provider) modelOptions(config ChatClientConfig) []compat.Option {
 	opts := []compat.Option{compat.WithProviderName("openai"), compat.WithDefaultModel(config.Model)}
 	opts = append(opts, p.options...)
 	if config.Temperature != nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/kiry163/easyllm"
 	"github.com/kiry163/easyllm/provider"
 	"github.com/kiry163/easyllm/tool"
 )
@@ -39,7 +40,7 @@ type ToolCallResult struct {
 	Err    error
 }
 
-func run(ctx context.Context, client provider.ModelClient, session *Session, metadata map[string]any, cfg runConfig) (retResult *RunResult, retErr error) {
+func run(ctx context.Context, client easyllm.Client, session *Session, metadata map[string]any, cfg runConfig) (retResult *RunResult, retErr error) {
 	if session == nil {
 		return nil, fmt.Errorf("session is required")
 	}
@@ -79,7 +80,7 @@ func run(ctx context.Context, client provider.ModelClient, session *Session, met
 	}
 
 	for iteration := 1; iteration <= cfg.maxModelCalls; iteration++ {
-		modelReq := provider.ModelRequest{
+		modelReq := easyllm.ModelRequest{
 			Input:    session.ItemsView(),
 			Tools:    tool.DefinitionsFromTools(cfg.tools),
 			Metadata: cloneMap(metadata),

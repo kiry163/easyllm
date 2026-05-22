@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/kiry163/easyllm/provider"
+	"github.com/kiry163/easyllm"
 	"github.com/kiry163/easyllm/tool"
 )
 
@@ -143,8 +143,24 @@ func TestBuildClientSupportsChatAndResponses(t *testing.T) {
 		if client == nil {
 			t.Fatalf("buildClient(%s) returned nil client", transport)
 		}
-		if _, ok := any(client).(provider.ModelClient); !ok {
+		if _, ok := any(client).(easyllm.Client); !ok {
 			t.Fatalf("buildClient(%s) returned non-model client: %T", transport, client)
 		}
+	}
+}
+
+func TestBuildClientSupportsThinkingOption(t *testing.T) {
+	client, err := buildClient(config{
+		Transport: "chat",
+		APIKey:    "token",
+		BaseURL:   "https://example.test/v1",
+		Model:     "qwen-plus",
+		Thinking:  true,
+	})
+	if err != nil {
+		t.Fatalf("buildClient returned error: %v", err)
+	}
+	if client == nil {
+		t.Fatalf("expected non-nil client")
 	}
 }

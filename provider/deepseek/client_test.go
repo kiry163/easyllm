@@ -51,7 +51,7 @@ func TestClientUsesProviderOwnedModelAndSamplingOptions(t *testing.T) {
 	temperature := 0.6
 	topP := 0.7
 	maxTokens := 512
-	client := deepseekProvider.ChatModel(ChatModelConfig{
+	client := deepseekProvider.ChatClient(ChatClientConfig{
 		Model:       "deepseek-v4-flash",
 		Temperature: &temperature,
 		TopP:        &topP,
@@ -101,7 +101,7 @@ func TestProviderSupportsRetryOption(t *testing.T) {
 			MaxBackoff:     time.Millisecond,
 		}),
 	)
-	client := deepseekProvider.ChatModel(ChatModelConfig{Model: "deepseek-v4-flash"})
+	client := deepseekProvider.ChatClient(ChatClientConfig{Model: "deepseek-v4-flash"})
 	_, err := client.Generate(context.Background(), provider.ModelRequest{
 		Input: []provider.InputItem{
 			provider.UserMessageItem{Content: []provider.TextPart{{Text: "hello"}}},
@@ -134,7 +134,7 @@ func TestProviderSupportsTimeoutOption(t *testing.T) {
 		WithBaseURL(server.URL),
 		WithTimeout(10*time.Millisecond),
 	)
-	client := deepseekProvider.ChatModel(ChatModelConfig{Model: "deepseek-v4-flash"})
+	client := deepseekProvider.ChatClient(ChatClientConfig{Model: "deepseek-v4-flash"})
 	_, err := client.Generate(context.Background(), provider.ModelRequest{
 		Input: []provider.InputItem{
 			provider.UserMessageItem{Content: []provider.TextPart{{Text: "hello"}}},

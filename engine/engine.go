@@ -3,12 +3,13 @@ package engine
 import (
 	"context"
 
+	"github.com/kiry163/easyllm"
 	"github.com/kiry163/easyllm/provider"
 	"github.com/kiry163/easyllm/tool"
 )
 
 type Engine struct {
-	client            provider.ModelClient
+	client            easyllm.Client
 	instructions      string
 	tools             []tool.Tool
 	hooks             Hooks
@@ -56,7 +57,7 @@ func WithStopAfterToolCall(stop bool) Option {
 	}
 }
 
-func New(client provider.ModelClient, opts ...Option) *Engine {
+func New(client easyllm.Client, opts ...Option) *Engine {
 	engine := &Engine{
 		client:        client,
 		maxModelCalls: 3,

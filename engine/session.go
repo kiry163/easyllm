@@ -1,6 +1,9 @@
 package engine
 
-import "github.com/kiry163/easyllm/provider"
+import (
+	"github.com/kiry163/easyllm"
+	"github.com/kiry163/easyllm/provider"
+)
 
 type Message struct {
 	Role       string
@@ -12,7 +15,7 @@ type Session struct {
 	ID           string
 	Items        []provider.InputItem
 	Usage        provider.Usage
-	LastResponse *provider.ModelResponse
+	LastResponse *easyllm.ModelResponse
 	Iteration    int
 	Metadata     map[string]any
 }
@@ -23,7 +26,7 @@ type SessionSnapshot struct {
 	ID           string
 	Items        []provider.InputItem
 	Usage        provider.Usage
-	LastResponse *provider.ModelResponse
+	LastResponse *easyllm.ModelResponse
 	Iteration    int
 	Metadata     map[string]any
 }
