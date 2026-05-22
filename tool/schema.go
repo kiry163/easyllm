@@ -3,6 +3,7 @@ package tool
 import (
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -11,6 +12,9 @@ type toolTag struct {
 	Name        string
 	Description string
 	Required    bool
+	Enum        []any
+	Minimum     *float64
+	Maximum     *float64
 }
 
 func SchemaFor[T any]() (map[string]any, error) {
@@ -45,14 +49,24 @@ func schemaForType(typ reflect.Type, topLevel bool) (map[string]any, error) {
 			if tag.Description != "" {
 				fieldSchema["description"] = tag.Description
 			}
+			if len(tag.Enum) > 0 {
+				fieldSchema["enum"] = tag.Enum
+			}
+			if tag.Minimum != nil {
+				fieldSchema["minimum"] = *tag.Minimum
+			}
+			if tag.Maximum != nil {
+				fieldSchema["maximum"] = *tag.Maximum
+			}
 			properties[name] = fieldSchema
 			if tag.Required {
 				required = append(required, name)
 			}
 		}
 		out := map[string]any{
-			"type":       "object",
-			"properties": properties,
+			"type":                 "object",
+			"properties":           properties,
+			"additionalProperties": false,
 		}
 		if len(required) > 0 {
 			out["required"] = required
@@ -98,9 +112,46 @@ func parseToolTag(field reflect.StructField) toolTag {
 			out.Name = strings.TrimSpace(strings.TrimPrefix(part, "name="))
 		case strings.HasPrefix(part, "desc="):
 			out.Description = strings.TrimSpace(strings.TrimPrefix(part, "desc="))
+		case strings.HasPrefix(part, "enum="):
+			out.Enum = parseEnumValues(strings.TrimSpace(strings.TrimPrefix(part, "enum=")))
+		case strings.HasPrefix(part, "minimum="):
+			if value, ok := parseNumberTag(strings.TrimSpace(strings.TrimPrefix(part, "minimum="))); ok {
+				out.Minimum = &value
+			}
+		case strings.HasPrefix(part, "maximum="):
+			if value, ok := parseNumberTag(strings.TrimSpace(strings.TrimPrefix(part, "maximum="))); ok {
+				out.Maximum = &value
+			}
 		}
 	}
 	return out
+}
+
+func parseEnumValues(raw string) []any {
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, "|")
+	out := make([]any, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		out = append(out, part)
+	}
+	return out
+}
+
+func parseNumberTag(raw string) (float64, bool) {
+	if raw == "" {
+		return 0, false
+	}
+	value, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return 0, false
+	}
+	return value, true
 }
 
 func fieldName(field reflect.StructField, tag toolTag) string {

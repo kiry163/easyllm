@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/kiry163/easyllm/provider"
+	"github.com/kiry163/easyllm/tool"
 )
 
 func TestChatClientRetriesAndNormalizesToolCalls(t *testing.T) {
@@ -239,6 +240,133 @@ func TestChatClientUsesDefaultSamplingOptions(t *testing.T) {
 	_, err := client.Generate(context.Background(), provider.ModelRequest{
 		Input: []provider.InputItem{
 			provider.UserMessageItem{Content: []provider.TextPart{{Text: "hello"}}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+}
+
+func TestChatClientRendersToolsAsNestedFunctionDefinitions(t *testing.T) {
+	strict := true
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		tools, ok := body["tools"].([]any)
+		if !ok || len(tools) != 1 {
+			t.Fatalf("unexpected tools: %#v", body["tools"])
+		}
+		rendered, ok := tools[0].(map[string]any)
+		if !ok {
+			t.Fatalf("unexpected tool shape: %#v", tools[0])
+		}
+		if rendered["type"] != "function" {
+			t.Fatalf("unexpected tool type: %#v", rendered["type"])
+		}
+		if _, ok := rendered["name"]; ok {
+			t.Fatalf("chat tool should not use flat name field: %#v", rendered)
+		}
+		fn, ok := rendered["function"].(map[string]any)
+		if !ok {
+			t.Fatalf("chat tool should nest function definition: %#v", rendered)
+		}
+		if fn["name"] != "get_weather" || fn["description"] != "Get weather" {
+			t.Fatalf("unexpected function definition: %#v", fn)
+		}
+		if fn["strict"] != true {
+			t.Fatalf("expected strict=true in nested function definition, got %#v", fn["strict"])
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{
+					"message":       map[string]any{"content": "done"},
+					"finish_reason": "stop",
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	openaiProvider := NewProvider(WithAPIKey("token"), WithBaseURL(server.URL))
+	client := openaiProvider.ChatModel(ChatModelConfig{Model: "gpt-test"})
+	_, err := client.Generate(context.Background(), provider.ModelRequest{
+		Input: []provider.InputItem{
+			provider.UserMessageItem{Content: []provider.TextPart{{Text: "hello"}}},
+		},
+		Tools: []tool.Definition{
+			{
+				Name:        "get_weather",
+				Description: "Get weather",
+				Parameters:  map[string]any{"type": "object"},
+				Strict:      &strict,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+}
+
+func TestResponsesClientRendersToolsAsFlatFunctionDefinitions(t *testing.T) {
+	strict := true
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		tools, ok := body["tools"].([]any)
+		if !ok || len(tools) != 1 {
+			t.Fatalf("unexpected tools: %#v", body["tools"])
+		}
+		rendered, ok := tools[0].(map[string]any)
+		if !ok {
+			t.Fatalf("unexpected tool shape: %#v", tools[0])
+		}
+		if rendered["type"] != "function" {
+			t.Fatalf("unexpected tool type: %#v", rendered["type"])
+		}
+		if _, ok := rendered["function"]; ok {
+			t.Fatalf("responses tool should not nest function definition: %#v", rendered)
+		}
+		if rendered["name"] != "get_weather" || rendered["description"] != "Get weather" {
+			t.Fatalf("unexpected function definition: %#v", rendered)
+		}
+		if rendered["strict"] != true {
+			t.Fatalf("expected strict=true in flat function definition, got %#v", rendered["strict"])
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id": "resp_123",
+			"output": []map[string]any{
+				{
+					"type": "message",
+					"role": "assistant",
+					"content": []map[string]any{
+						{
+							"type": "output_text",
+							"text": "done",
+						},
+					},
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	openaiProvider := NewProvider(WithAPIKey("token"), WithBaseURL(server.URL))
+	client := openaiProvider.ResponsesModel(ResponsesModelConfig{Model: "gpt-test"})
+	_, err := client.Generate(context.Background(), provider.ModelRequest{
+		Input: []provider.InputItem{
+			provider.UserMessageItem{Content: []provider.TextPart{{Text: "hello"}}},
+		},
+		Tools: []tool.Definition{
+			{
+				Name:        "get_weather",
+				Description: "Get weather",
+				Parameters:  map[string]any{"type": "object"},
+				Strict:      &strict,
+			},
 		},
 	})
 	if err != nil {

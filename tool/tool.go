@@ -10,6 +10,7 @@ type Definition struct {
 	Name        string
 	Description string
 	Parameters  map[string]any
+	Strict      *bool
 }
 
 type CallContext struct {
@@ -29,33 +30,41 @@ type Tool interface {
 	Invoke(context.Context, CallContext, map[string]any) (Result, error)
 }
 
-type StructHandler[T any] func(context.Context, CallContext, T) (Result, error)
-
-type structTool[T any] struct {
-	definition Definition
-	handler    StructHandler[T]
+type runnerMetadata interface {
+	Name() string
+	Description() string
 }
 
-func NewStruct[T any](name, description string, handler StructHandler[T]) (Tool, error) {
-	parameters, err := SchemaFor[T]()
+type toolRunner[Args any] interface {
+	runnerMetadata
+	Run(context.Context, CallContext, Args) (Result, error)
+}
+
+type runnableTool[Args any, Runner toolRunner[Args]] struct {
+	definition Definition
+	runner     Runner
+}
+
+func New[Args any, Runner toolRunner[Args]](runner Runner) (Tool, error) {
+	parameters, err := SchemaFor[Args]()
 	if err != nil {
 		return nil, err
 	}
-	return &structTool[T]{
+	return &runnableTool[Args, Runner]{
 		definition: Definition{
-			Name:        name,
-			Description: description,
+			Name:        runner.Name(),
+			Description: runner.Description(),
 			Parameters:  parameters,
 		},
-		handler: handler,
+		runner: runner,
 	}, nil
 }
 
-func (t *structTool[T]) Definition() Definition {
+func (t *runnableTool[Args, Runner]) Definition() Definition {
 	return t.definition
 }
 
-func (t *structTool[T]) Invoke(ctx context.Context, call CallContext, raw map[string]any) (Result, error) {
+func (t *runnableTool[Args, Runner]) Invoke(ctx context.Context, call CallContext, raw map[string]any) (Result, error) {
 	if raw == nil {
 		raw = map[string]any{}
 	}
@@ -65,7 +74,7 @@ func (t *structTool[T]) Invoke(ctx context.Context, call CallContext, raw map[st
 			raw = decoded
 		}
 	}
-	args, err := BindArgs[T](raw)
+	args, err := BindArgs[Args](raw)
 	if err != nil {
 		payload := map[string]any{
 			"status":  "error",
@@ -74,7 +83,7 @@ func (t *structTool[T]) Invoke(ctx context.Context, call CallContext, raw map[st
 		}
 		return Result{}, &PayloadError{Err: err, Payload: payload}
 	}
-	return t.handler(ctx, call, args)
+	return t.runner.Run(ctx, call, args)
 }
 
 func DefinitionsFromTools(tools []Tool) []Definition {

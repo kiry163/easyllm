@@ -48,13 +48,9 @@ func (fakeClient) Generate(ctx context.Context, req provider.ModelRequest) (*pro
 }
 
 func TestRunnerExecutesToolCallsWithinSession(t *testing.T) {
-	runTool, err := tool.NewStruct("submit", "submit payload", func(ctx context.Context, call tool.CallContext, args struct {
-		Value string `tool:"name=value,required"`
-	}) (tool.Result, error) {
-		return tool.Result{Message: "ok"}, nil
-	})
+	runTool, err := tool.New[submitArgs](submitTool{})
 	if err != nil {
-		t.Fatalf("NewStruct returned error: %v", err)
+		t.Fatalf("New returned error: %v", err)
 	}
 
 	session := NewSession()
@@ -75,6 +71,54 @@ func TestRunnerExecutesToolCallsWithinSession(t *testing.T) {
 	if result.ToolCallCount != 1 {
 		t.Fatalf("unexpected tool call count: %d", result.ToolCallCount)
 	}
+}
+
+func TestRunnerCanStopAfterSuccessfulToolCall(t *testing.T) {
+	runTool, err := tool.New[submitArgs](submitTool{})
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+
+	session := NewSession()
+	session.AppendUserText("hello")
+
+	runner := Runner{Client: fakeClient{}}
+	result, err := runner.Run(context.Background(), RunRequest{
+		Session:           session,
+		Tools:             []tool.Tool{runTool},
+		MaxModelCalls:     3,
+		StopAfterToolCall: true,
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if result.ModelCallCount != 1 {
+		t.Fatalf("expected one model call, got %d", result.ModelCallCount)
+	}
+	if result.StopReason != "stop_on_tool_result" {
+		t.Fatalf("unexpected stop reason: %q", result.StopReason)
+	}
+	if result.OutputText != "" {
+		t.Fatalf("expected no model summary after tool call, got %q", result.OutputText)
+	}
+}
+
+type submitArgs struct {
+	Value string `tool:"name=value,required"`
+}
+
+type submitTool struct{}
+
+func (submitTool) Name() string {
+	return "submit"
+}
+
+func (submitTool) Description() string {
+	return "submit payload"
+}
+
+func (submitTool) Run(ctx context.Context, call tool.CallContext, args submitArgs) (tool.Result, error) {
+	return tool.Result{Message: "ok"}, nil
 }
 
 func TestSessionMessagesViewIncludesToolResults(t *testing.T) {

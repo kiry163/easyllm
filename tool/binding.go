@@ -22,6 +22,7 @@ func BindArgs[T any](raw map[string]any) (T, error) {
 
 func bindStruct(target reflect.Value, raw map[string]any, path string) error {
 	typ := target.Type()
+	allowed := map[string]struct{}{}
 	for i := 0; i < typ.NumField(); i++ {
 		field := typ.Field(i)
 		if field.PkgPath != "" {
@@ -32,6 +33,7 @@ func bindStruct(target reflect.Value, raw map[string]any, path string) error {
 		if name == "-" {
 			continue
 		}
+		allowed[name] = struct{}{}
 		value, ok := raw[name]
 		fieldPath := name
 		if path != "" {
@@ -46,8 +48,80 @@ func bindStruct(target reflect.Value, raw map[string]any, path string) error {
 		if err := assignValue(target.Field(i), value, fieldPath); err != nil {
 			return err
 		}
+		if err := validateConstraints(target.Field(i), tag, fieldPath); err != nil {
+			return err
+		}
+	}
+	for name := range raw {
+		if _, ok := allowed[name]; !ok {
+			fieldPath := name
+			if path != "" {
+				fieldPath = path + "." + name
+			}
+			return fmt.Errorf("%s is not allowed", fieldPath)
+		}
 	}
 	return nil
+}
+
+func validateConstraints(value reflect.Value, tag toolTag, path string) error {
+	value = derefValue(value)
+	if len(tag.Enum) > 0 {
+		current := fmt.Sprint(value.Interface())
+		matched := false
+		for _, allowed := range tag.Enum {
+			if current == fmt.Sprint(allowed) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return fmt.Errorf("%s must be one of %v", path, tag.Enum)
+		}
+	}
+	if tag.Minimum != nil || tag.Maximum != nil {
+		current, ok := numericReflectValue(value)
+		if !ok {
+			return nil
+		}
+		if tag.Minimum != nil && current < *tag.Minimum {
+			return fmt.Errorf("%s must be >= %s", path, formatNumber(*tag.Minimum))
+		}
+		if tag.Maximum != nil && current > *tag.Maximum {
+			return fmt.Errorf("%s must be <= %s", path, formatNumber(*tag.Maximum))
+		}
+	}
+	return nil
+}
+
+func derefValue(value reflect.Value) reflect.Value {
+	for value.Kind() == reflect.Pointer {
+		if value.IsNil() {
+			return value
+		}
+		value = value.Elem()
+	}
+	return value
+}
+
+func numericReflectValue(value reflect.Value) (float64, bool) {
+	switch value.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return float64(value.Int()), true
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return float64(value.Uint()), true
+	case reflect.Float32, reflect.Float64:
+		return value.Float(), true
+	default:
+		return 0, false
+	}
+}
+
+func formatNumber(value float64) string {
+	if value == float64(int64(value)) {
+		return fmt.Sprintf("%d", int64(value))
+	}
+	return fmt.Sprintf("%g", value)
 }
 
 func assignValue(target reflect.Value, raw any, path string) error {

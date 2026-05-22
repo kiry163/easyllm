@@ -163,7 +163,7 @@ func (c *Client) generateChat(ctx context.Context, req provider.ModelRequest) (*
 		"messages": openAIChatMessages(req.Input),
 	}
 	if len(req.Tools) > 0 {
-		body["tools"] = openAITools(req.Tools)
+		body["tools"] = openAIChatTools(req.Tools)
 		body["tool_choice"] = "auto"
 	}
 	for key, value := range c.mergedBody(req.Options) {
@@ -182,7 +182,7 @@ func (c *Client) generateResponses(ctx context.Context, req provider.ModelReques
 		"input": openAIResponsesInput(req.Input),
 	}
 	if len(req.Tools) > 0 {
-		body["tools"] = openAITools(req.Tools)
+		body["tools"] = openAIResponsesTools(req.Tools)
 		// keep room for compat expansion; not all providers accept this on responses yet
 	}
 	for key, value := range c.mergedBody(req.Options) {
@@ -442,20 +442,44 @@ func parseResponsesResponse(r io.Reader) (*provider.ModelResponse, error) {
 	return out, nil
 }
 
-func openAITools(tools []tool.Definition) []map[string]any {
+func openAIChatTools(tools []tool.Definition) []map[string]any {
 	if len(tools) == 0 {
 		return nil
 	}
 	out := make([]map[string]any, 0, len(tools))
 	for _, current := range tools {
+		function := map[string]any{
+			"name":        current.Name,
+			"description": current.Description,
+			"parameters":  current.Parameters,
+		}
+		if current.Strict != nil {
+			function["strict"] = *current.Strict
+		}
 		out = append(out, map[string]any{
-			"type": "function",
-			"function": map[string]any{
-				"name":        current.Name,
-				"description": current.Description,
-				"parameters":  current.Parameters,
-			},
+			"type":     "function",
+			"function": function,
 		})
+	}
+	return out
+}
+
+func openAIResponsesTools(tools []tool.Definition) []map[string]any {
+	if len(tools) == 0 {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(tools))
+	for _, current := range tools {
+		function := map[string]any{
+			"type":        "function",
+			"name":        current.Name,
+			"description": current.Description,
+			"parameters":  current.Parameters,
+		}
+		if current.Strict != nil {
+			function["strict"] = *current.Strict
+		}
+		out = append(out, function)
 	}
 	return out
 }

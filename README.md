@@ -125,7 +125,19 @@ type WeatherArgs struct {
 	City string `tool:"name=city,required,desc=City name"`
 }
 
-weatherTool, err := tool.NewStruct("get_weather", "Get current weather", func(ctx context.Context, call tool.CallContext, args WeatherArgs) (tool.Result, error) {
+type WeatherTool struct {
+	db *sql.DB
+}
+
+func (WeatherTool) Name() string {
+	return "get_weather"
+}
+
+func (WeatherTool) Description() string {
+	return "Get current weather"
+}
+
+func (w WeatherTool) Run(ctx context.Context, call tool.CallContext, args WeatherArgs) (tool.Result, error) {
 	return tool.Result{
 		Message: "sunny",
 		Data: map[string]any{
@@ -133,7 +145,9 @@ weatherTool, err := tool.NewStruct("get_weather", "Get current weather", func(ct
 			"temp": "25C",
 		},
 	}, nil
-})
+}
+
+weatherTool, err := tool.New[WeatherArgs](WeatherTool{db: db})
 if err != nil {
 	panic(err)
 }

@@ -16,9 +16,10 @@ type Agent struct {
 }
 
 type RunRequest struct {
-	Session  *runtime.Session
-	Input    string
-	Metadata map[string]any
+	Session           *runtime.Session
+	Input             string
+	Metadata          map[string]any
+	StopAfterToolCall bool
 }
 
 type RunResult struct {
@@ -45,10 +46,11 @@ func (a Agent) Run(ctx context.Context, req RunRequest) (*RunResult, error) {
 		runner = &runtime.Runner{Client: a.Client}
 	}
 	result, err := runner.Run(ctx, runtime.RunRequest{
-		Session:       session,
-		Tools:         a.Tools,
-		MaxModelCalls: 3,
-		Metadata:      req.Metadata,
+		Session:           session,
+		Tools:             a.Tools,
+		MaxModelCalls:     3,
+		StopAfterToolCall: req.StopAfterToolCall,
+		Metadata:          req.Metadata,
 	})
 	if err != nil {
 		return nil, err

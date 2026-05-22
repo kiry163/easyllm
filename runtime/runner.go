@@ -9,12 +9,12 @@ import (
 )
 
 type RunRequest struct {
-	Session          *Session
-	Tools            []tool.Tool
-	Options          map[string]any
-	MaxModelCalls    int
-	StopOnToolResult func(tool.Result) bool
-	Metadata         map[string]any
+	Session           *Session
+	Tools             []tool.Tool
+	Options           map[string]any
+	MaxModelCalls     int
+	StopAfterToolCall bool
+	Metadata          map[string]any
 }
 
 type RunResult struct {
@@ -190,7 +190,7 @@ func (r Runner) Run(ctx context.Context, req RunRequest) (retResult *RunResult, 
 						return nil, retErr
 					}
 				}
-				if invokeErr == nil && req.StopOnToolResult != nil && req.StopOnToolResult(outcome) {
+				if invokeErr == nil && req.StopAfterToolCall {
 					result.StopReason = "stop_on_tool_result"
 					result.Session = req.Session.Snapshot()
 					retResult = result

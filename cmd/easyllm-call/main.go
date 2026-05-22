@@ -1,21 +1,22 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/kiry163/easyllm/agent"
 	"github.com/kiry163/easyllm/provider"
-	"github.com/kiry163/easyllm/provider/openai"
 	"github.com/kiry163/easyllm/provider/qwen"
+	"github.com/kiry163/easyllm/tool"
 )
 
 type config struct {
-	Provider     string
 	Transport    string
 	Model        string
 	Prompt       string
@@ -47,6 +48,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	a := agent.Agent{
 		Instructions: cfg.Instructions,
 		Client:       client,
+		Tools:        []tool.Tool{weatherTool()},
 	}
 	result, err := a.Run(ctx, agent.RunRequest{Input: cfg.Prompt})
 	if err != nil {
@@ -59,39 +61,41 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 }
 
 func parseConfig(args []string, getenv func(string) string) (config, error) {
-	var cfg config
+	cfg := config{
+		Transport: "chat",
+		BaseURL:   qwen.DefaultBaseURL,
+		Prompt:    "请查询今天北京的天气。",
+	}
 	fs := flag.NewFlagSet("easyllm-call", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	fs.StringVar(&cfg.Provider, "provider", "openai", "provider name")
+	envPath := ".env"
+	fs.StringVar(&envPath, "env", envPath, "path to .env file")
 	fs.StringVar(&cfg.Transport, "transport", "chat", "provider transport: chat or responses")
-	fs.StringVar(&cfg.Model, "model", "", "model name")
-	fs.StringVar(&cfg.Prompt, "prompt", "", "input prompt")
-	fs.StringVar(&cfg.BaseURL, "base-url", "https://api.openai.com/v1", "provider base url")
-	fs.StringVar(&cfg.Instructions, "instructions", "", "system instructions")
-	fs.BoolVar(&cfg.Thinking, "enable-thinking", false, "enable provider thinking mode when supported")
-	fs.Float64Var(&cfg.Temperature, "temperature", 0, "provider default temperature")
-	fs.Float64Var(&cfg.TopP, "top-p", 0, "provider default top_p")
-	fs.IntVar(&cfg.MaxTokens, "max-tokens", 0, "provider default max tokens")
 	if err := fs.Parse(args); err != nil {
 		return cfg, err
 	}
-	cfg.Provider = strings.TrimSpace(strings.ToLower(cfg.Provider))
+
+	envValues, err := loadDotEnv(envPath)
+	if err != nil {
+		return cfg, err
+	}
+	cfg.APIKey = firstNonEmpty(envValues["QWEN_API_KEY"], envValues["DASHSCOPE_API_KEY"], getenv("QWEN_API_KEY"), getenv("DASHSCOPE_API_KEY"))
+	cfg.BaseURL = firstNonEmpty(envValues["QWEN_BASE_URL"], envValues["DASHSCOPE_BASE_URL"], getenv("QWEN_BASE_URL"), getenv("DASHSCOPE_BASE_URL"), cfg.BaseURL)
+	cfg.Model = firstNonEmpty(envValues["QWEN_MODEL"], getenv("QWEN_MODEL"))
+	cfg.Prompt = firstNonEmpty(envValues["EASYLLM_PROMPT"], getenv("EASYLLM_PROMPT"), cfg.Prompt)
+	cfg.Instructions = firstNonEmpty(envValues["EASYLLM_INSTRUCTIONS"], getenv("EASYLLM_INSTRUCTIONS"))
+	cfg.Transport = firstNonEmpty(envValues["EASYLLM_TRANSPORT"], getenv("EASYLLM_TRANSPORT"), cfg.Transport)
+	cfg.Thinking = boolValue(firstNonEmpty(envValues["QWEN_ENABLE_THINKING"], getenv("QWEN_ENABLE_THINKING")), false)
+	cfg.Temperature = floatValue(firstNonEmpty(envValues["QWEN_TEMPERATURE"], getenv("QWEN_TEMPERATURE")))
+	cfg.TopP = floatValue(firstNonEmpty(envValues["QWEN_TOP_P"], getenv("QWEN_TOP_P")))
+	cfg.MaxTokens = intValue(firstNonEmpty(envValues["QWEN_MAX_TOKENS"], getenv("QWEN_MAX_TOKENS")))
+
 	cfg.Transport = strings.TrimSpace(strings.ToLower(cfg.Transport))
 	cfg.Model = strings.TrimSpace(cfg.Model)
 	cfg.Prompt = strings.TrimSpace(cfg.Prompt)
 	cfg.BaseURL = strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
 	cfg.Instructions = strings.TrimSpace(cfg.Instructions)
-	switch cfg.Provider {
-	case "openai":
-		cfg.APIKey = strings.TrimSpace(getenv("OPENAI_API_KEY"))
-	case "qwen":
-		if cfg.BaseURL == "https://api.openai.com/v1" {
-			cfg.BaseURL = qwen.DefaultBaseURL
-		}
-		cfg.APIKey = strings.TrimSpace(getenv("DASHSCOPE_API_KEY"))
-	default:
-		return cfg, fmt.Errorf("unsupported provider %q", cfg.Provider)
-	}
+	cfg.APIKey = strings.TrimSpace(cfg.APIKey)
 	if cfg.Transport != "chat" && cfg.Transport != "responses" {
 		return cfg, fmt.Errorf("unsupported transport %q", cfg.Transport)
 	}
@@ -105,55 +109,25 @@ func parseConfig(args []string, getenv func(string) string) (config, error) {
 		return cfg, errors.New("base URL is required")
 	}
 	if cfg.APIKey == "" {
-		if cfg.Provider == "qwen" {
-			return cfg, errors.New("DASHSCOPE_API_KEY is required")
-		}
-		return cfg, errors.New("OPENAI_API_KEY is required")
+		return cfg, errors.New("QWEN_API_KEY or DASHSCOPE_API_KEY is required")
 	}
 	return cfg, nil
 }
 
 func buildClient(cfg config) (provider.ModelClient, error) {
-	switch cfg.Provider {
-	case "openai":
-		openaiProvider := openai.NewProvider(
-			openai.WithAPIKey(cfg.APIKey),
-			openai.WithBaseURL(cfg.BaseURL),
-		)
-		config := openaiChatModelConfig(cfg)
-		if cfg.Transport == "responses" {
-			return openaiProvider.ResponsesModel(openai.ResponsesModelConfig(config)), nil
-		}
-		return openaiProvider.ChatModel(config), nil
-	case "qwen":
-		qwenProvider := qwen.NewProvider(
-			qwen.WithAPIKey(cfg.APIKey),
-			qwen.WithBaseURL(cfg.BaseURL),
-		)
-		config := qwenChatModelConfig(cfg)
-		if cfg.Transport == "responses" {
-			return qwenProvider.ResponsesModel(qwen.ResponsesModelConfig(config)), nil
-		}
+	qwenProvider := qwen.NewProvider(
+		qwen.WithAPIKey(cfg.APIKey),
+		qwen.WithBaseURL(cfg.BaseURL),
+	)
+	config := qwenChatModelConfig(cfg)
+	switch cfg.Transport {
+	case "responses":
+		return qwenProvider.ResponsesModel(qwen.ResponsesModelConfig(config)), nil
+	case "chat":
 		return qwenProvider.ChatModel(config), nil
 	default:
-		return nil, fmt.Errorf("unsupported provider %q", cfg.Provider)
+		return nil, fmt.Errorf("unsupported transport %q", cfg.Transport)
 	}
-}
-
-func openaiChatModelConfig(cfg config) openai.ChatModelConfig {
-	config := openai.ChatModelConfig{
-		Model: cfg.Model,
-	}
-	if cfg.Temperature > 0 {
-		config.Temperature = &cfg.Temperature
-	}
-	if cfg.TopP > 0 {
-		config.TopP = &cfg.TopP
-	}
-	if cfg.MaxTokens > 0 {
-		config.MaxTokens = &cfg.MaxTokens
-	}
-	return config
 }
 
 func qwenChatModelConfig(cfg config) qwen.ChatModelConfig {
@@ -171,4 +145,118 @@ func qwenChatModelConfig(cfg config) qwen.ChatModelConfig {
 		config.MaxTokens = &cfg.MaxTokens
 	}
 	return config
+}
+
+type weatherArgs struct {
+	City string `tool:"name=city,required,desc=City name"`
+}
+
+func weatherTool() tool.Tool {
+	runTool, err := tool.New[weatherArgs](weatherToolRunner{})
+	if err != nil {
+		panic(err)
+	}
+	return runTool
+}
+
+type weatherToolRunner struct{}
+
+func (weatherToolRunner) Name() string {
+	return "get_weather"
+}
+
+func (weatherToolRunner) Description() string {
+	return "Get today's weather for a city"
+}
+
+func (weatherToolRunner) Run(ctx context.Context, call tool.CallContext, args weatherArgs) (tool.Result, error) {
+	city := strings.TrimSpace(args.City)
+	if city == "" {
+		city = "北京"
+	}
+	return tool.Result{
+		Message: city + "今天晴，气温 25C，微风。",
+		Data: map[string]any{
+			"city":        city,
+			"weather":     "晴",
+			"temperature": "25C",
+			"wind":        "微风",
+		},
+	}, nil
+}
+
+func loadDotEnv(path string) (map[string]string, error) {
+	values := map[string]string{}
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return values, nil
+	}
+	file, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return values, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("open env file: %w", err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		value = strings.Trim(value, `"'`)
+		if key != "" {
+			values[key] = value
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("read env file: %w", err)
+	}
+	return values, nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func boolValue(raw string, fallback bool) bool {
+	raw = strings.TrimSpace(strings.ToLower(raw))
+	if raw == "" {
+		return fallback
+	}
+	value, err := strconv.ParseBool(raw)
+	if err != nil {
+		return fallback
+	}
+	return value
+}
+
+func floatValue(raw string) float64 {
+	value, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+	if err != nil {
+		return 0
+	}
+	return value
+}
+
+func intValue(raw string) int {
+	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil {
+		return 0
+	}
+	return value
 }
