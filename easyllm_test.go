@@ -27,6 +27,53 @@ func TestNewClientBuildsOpenAIClient(t *testing.T) {
 	}
 }
 
+func TestNewImageClientBuildsOpenAIImageClient(t *testing.T) {
+	client, err := NewImageClient(Config{
+		Provider: ProviderOpenAI,
+		APIKey:   "token",
+		Model:    "gpt-image-1",
+	})
+	if err != nil {
+		t.Fatalf("NewImageClient returned error: %v", err)
+	}
+	if client == nil {
+		t.Fatal("expected image client")
+	}
+}
+
+func TestNewImageClientRejectsUnsupportedProvider(t *testing.T) {
+	_, err := NewImageClient(Config{
+		Provider: ProviderDeepSeek,
+		APIKey:   "token",
+		Model:    "deepseek-v4-flash",
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if got := err.Error(); got != `provider "deepseek" does not support image generation` {
+		t.Fatalf("unexpected error: %q", got)
+	}
+}
+
+func TestNewImageClientRequiresPromptAtCallTime(t *testing.T) {
+	client, err := NewImageClient(Config{
+		Provider: ProviderOpenAI,
+		APIKey:   "token",
+		Model:    "gpt-image-1",
+	})
+	if err != nil {
+		t.Fatalf("NewImageClient returned error: %v", err)
+	}
+
+	_, err = client.GenerateImage(context.Background(), ImageRequest{})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if got := err.Error(); got != "prompt is required" {
+		t.Fatalf("unexpected error: %q", got)
+	}
+}
+
 func TestNewClientBuildsOpenAICompatibleClient(t *testing.T) {
 	client, err := NewClient(Config{
 		Provider: ProviderOpenAICompatible,

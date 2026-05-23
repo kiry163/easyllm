@@ -30,6 +30,10 @@ type Client interface {
 
 type ModelRequest = model.ModelRequest
 type ModelResponse = model.ModelResponse
+type ImageClient = model.ImageClient
+type ImageRequest = model.ImageRequest
+type ImageResponse = model.ImageResponse
+type GeneratedImage = model.GeneratedImage
 type InputItem = model.InputItem
 type OutputItem = model.OutputItem
 type Usage = model.Usage
@@ -94,6 +98,19 @@ func NewClient(config Config) (Client, error) {
 	}
 }
 
+func NewImageClient(config Config) (ImageClient, error) {
+	if err := validateConfig(config); err != nil {
+		return nil, err
+	}
+
+	switch config.Provider {
+	case ProviderOpenAI:
+		return newOpenAIImageClient(config), nil
+	default:
+		return nil, fmt.Errorf("provider %q does not support image generation", config.Provider)
+	}
+}
+
 func validateConfig(config Config) error {
 	if strings.TrimSpace(config.Provider) == "" {
 		return fmt.Errorf("provider is required")
@@ -144,6 +161,29 @@ func newOpenAIClient(config Config) Client {
 		return p.ResponsesClient(openai.ResponsesClientConfig(clientConfig))
 	}
 	return p.ChatClient(clientConfig)
+}
+
+func newOpenAIImageClient(config Config) ImageClient {
+	opts := []openai.ProviderOption{
+		openai.WithAPIKey(config.APIKey),
+		openai.WithExtraBody(configExtraBody(config)),
+	}
+	if config.BaseURL != "" {
+		opts = append(opts, openai.WithBaseURL(config.BaseURL))
+	}
+	if config.Timeout > 0 {
+		opts = append(opts, openai.WithTimeout(config.Timeout))
+	}
+	if config.MaxAttempts > 0 {
+		opts = append(opts, openai.WithRetry(openai.RetryConfig{
+			MaxAttempts:    config.MaxAttempts,
+			InitialBackoff: config.InitialBackoff,
+			MaxBackoff:     config.MaxBackoff,
+		}))
+	}
+	return openai.NewProvider(opts...).ImageClient(openai.ImageClientConfig{
+		Model: config.Model,
+	})
 }
 
 func newOpenAICompatibleClient(config Config) Client {
