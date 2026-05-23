@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -142,5 +143,47 @@ func TestProviderSupportsTimeoutOption(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatalf("expected timeout error")
+	}
+}
+
+func TestClientGenerateStreamUsesCompatStreaming(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(strings.Join([]string{
+			`data: {"id":"chatcmpl_ds","choices":[{"delta":{"content":"deep"},"finish_reason":""}]}`,
+			``,
+			`data: {"choices":[{"delta":{"content":"seek"},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}`,
+			``,
+			`data: [DONE]`,
+			``,
+		}, "\n")))
+	}))
+	defer server.Close()
+
+	client := NewProvider(WithAPIKey("token"), WithBaseURL(server.URL)).ChatClient(ChatClientConfig{Model: "deepseek-chat"})
+	var gotText string
+	var done *model.ModelResponse
+	err := client.GenerateStream(context.Background(), model.ModelRequest{
+		Input: []model.InputItem{model.UserMessageItem{Content: []model.TextPart{{Text: "hello"}}}},
+	}, func(event model.StreamEvent) error {
+		switch event.Type {
+		case model.StreamEventMessageDelta:
+			gotText += event.Text
+		case model.StreamEventDone:
+			done, _ = event.Raw.(*model.ModelResponse)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("GenerateStream returned error: %v", err)
+	}
+	if gotText != "deepseek" {
+		t.Fatalf("unexpected streamed text: %q", gotText)
+	}
+	if done == nil || done.Provider != "deepseek" || done.Usage.TotalTokens != 3 {
+		t.Fatalf("unexpected done response: %+v", done)
 	}
 }

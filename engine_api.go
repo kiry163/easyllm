@@ -88,3 +88,24 @@ func (e *Engine) Run(ctx context.Context, req RunRequest) (*RunResult, error) {
 		stopAfterToolCall: e.stopAfterToolCall,
 	})
 }
+
+func (e *Engine) RunStream(ctx context.Context, req RunRequest, handler StreamHandler) (*RunResult, error) {
+	session := req.Session
+	if session == nil {
+		session = NewSession()
+	}
+	if e.instructions != "" && len(session.Items) == 0 {
+		session.AppendItems(model.SystemMessageItem{
+			Content: []model.TextPart{{Text: e.instructions}},
+		})
+	}
+	if req.Input != "" {
+		session.AppendUserText(req.Input)
+	}
+	return runStream(ctx, e.client, session, req.Metadata, handler, runConfig{
+		tools:             e.tools,
+		hooks:             e.hooks,
+		maxModelCalls:     e.maxModelCalls,
+		stopAfterToolCall: e.stopAfterToolCall,
+	})
+}
