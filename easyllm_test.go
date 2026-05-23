@@ -320,6 +320,159 @@ func TestNewClientOpenAICompatibleGenerateStreamResponses(t *testing.T) {
 	}
 }
 
+func TestNewClientOpenAIGenerateStreamChat(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(strings.Join([]string{
+			`data: {"id":"chatcmpl_oa","choices":[{"delta":{"content":"open"},"finish_reason":""}]}`,
+			``,
+			`data: {"choices":[{"delta":{"content":"ai"},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}`,
+			``,
+			`data: [DONE]`,
+			``,
+		}, "\n")))
+	}))
+	defer server.Close()
+
+	client, err := NewClient(Config{
+		Provider: ProviderOpenAI,
+		APIKey:   "token",
+		BaseURL:  server.URL,
+		Model:    "gpt-test",
+	})
+	if err != nil {
+		t.Fatalf("NewClient returned error: %v", err)
+	}
+
+	var text strings.Builder
+	var done *ModelResponse
+	err = client.GenerateStream(context.Background(), ModelRequest{
+		Input: []InputItem{UserMessageItem{Content: []TextPart{{Text: "hello"}}}},
+	}, func(event StreamEvent) error {
+		switch event.Type {
+		case StreamEventMessageDelta:
+			text.WriteString(event.Text)
+		case StreamEventDone:
+			done, _ = event.Raw.(*ModelResponse)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("GenerateStream returned error: %v", err)
+	}
+	if text.String() != "openai" {
+		t.Fatalf("unexpected streamed text: %q", text.String())
+	}
+	if done == nil || done.Provider != ProviderOpenAI || done.Usage.TotalTokens != 3 {
+		t.Fatalf("unexpected done response: %+v", done)
+	}
+}
+
+func TestNewClientQwenGenerateStreamChat(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(strings.Join([]string{
+			`data: {"id":"chatcmpl_qwen","choices":[{"delta":{"content":"qw"},"finish_reason":""}]}`,
+			``,
+			`data: {"choices":[{"delta":{"content":"en"},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}`,
+			``,
+			`data: [DONE]`,
+			``,
+		}, "\n")))
+	}))
+	defer server.Close()
+
+	client, err := NewClient(Config{
+		Provider: ProviderQwen,
+		APIKey:   "token",
+		BaseURL:  server.URL,
+		Model:    "qwen-plus",
+	})
+	if err != nil {
+		t.Fatalf("NewClient returned error: %v", err)
+	}
+
+	var gotText string
+	var done *ModelResponse
+	err = client.GenerateStream(context.Background(), ModelRequest{
+		Input: []InputItem{UserMessageItem{Content: []TextPart{{Text: "hello"}}}},
+	}, func(event StreamEvent) error {
+		switch event.Type {
+		case StreamEventMessageDelta:
+			gotText += event.Text
+		case StreamEventDone:
+			done, _ = event.Raw.(*ModelResponse)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("GenerateStream returned error: %v", err)
+	}
+	if gotText != "qwen" {
+		t.Fatalf("unexpected streamed text: %q", gotText)
+	}
+	if done == nil || done.Provider != ProviderQwen || done.Usage.TotalTokens != 3 {
+		t.Fatalf("unexpected done response: %+v", done)
+	}
+}
+
+func TestNewClientDeepSeekGenerateStreamChat(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(strings.Join([]string{
+			`data: {"id":"chatcmpl_ds","choices":[{"delta":{"content":"deep"},"finish_reason":""}]}`,
+			``,
+			`data: {"choices":[{"delta":{"content":"seek"},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}`,
+			``,
+			`data: [DONE]`,
+			``,
+		}, "\n")))
+	}))
+	defer server.Close()
+
+	client, err := NewClient(Config{
+		Provider: ProviderDeepSeek,
+		APIKey:   "token",
+		BaseURL:  server.URL,
+		Model:    "deepseek-chat",
+	})
+	if err != nil {
+		t.Fatalf("NewClient returned error: %v", err)
+	}
+
+	var gotText string
+	var done *ModelResponse
+	err = client.GenerateStream(context.Background(), ModelRequest{
+		Input: []InputItem{UserMessageItem{Content: []TextPart{{Text: "hello"}}}},
+	}, func(event StreamEvent) error {
+		switch event.Type {
+		case StreamEventMessageDelta:
+			gotText += event.Text
+		case StreamEventDone:
+			done, _ = event.Raw.(*ModelResponse)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("GenerateStream returned error: %v", err)
+	}
+	if gotText != "deepseek" {
+		t.Fatalf("unexpected streamed text: %q", gotText)
+	}
+	if done == nil || done.Provider != ProviderDeepSeek || done.Usage.TotalTokens != 3 {
+		t.Fatalf("unexpected done response: %+v", done)
+	}
+}
+
 func TestNewClientBuildsDeepSeekClient(t *testing.T) {
 	client, err := NewClient(Config{
 		Provider: ProviderDeepSeek,

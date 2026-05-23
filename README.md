@@ -187,7 +187,7 @@ if err != nil {
 fmt.Println(result.StopReason)
 ```
 
-Streaming support currently targets `ProviderOpenAICompatible` in phase one.
+Streaming is available on the built-in OpenAI, OpenAI-compatible, Qwen, and DeepSeek clients. `TransportResponses` streaming is available on providers that expose the responses transport; DeepSeek remains chat-only.
 
 ## Tool Calling
 
