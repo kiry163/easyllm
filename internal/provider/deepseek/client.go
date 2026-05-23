@@ -22,6 +22,7 @@ type Provider struct {
 type ProviderOption func(*Provider)
 
 type ChatClientConfig struct {
+	Thinking    *bool
 	Model       string
 	Temperature *float64
 	TopP        *float64
@@ -65,10 +66,11 @@ func NewProvider(opts ...ProviderOption) *Provider {
 }
 
 func (p *Provider) ChatClient(config ChatClientConfig) model.Client {
+	extraBody := deepSeekExtraBody(config.Thinking, p.extraBody)
 	opts := []compat.Option{
 		compat.WithProviderName("deepseek"),
 		compat.WithDefaultModel(config.Model),
-		compat.WithExtraBody(p.extraBody),
+		compat.WithExtraBody(extraBody),
 	}
 	opts = append(opts, p.options...)
 	if config.Temperature != nil {
@@ -81,6 +83,28 @@ func (p *Provider) ChatClient(config ChatClientConfig) model.Client {
 		opts = append(opts, compat.WithMaxTokens(*config.MaxTokens))
 	}
 	return compat.NewChatClient(p.apiKey, p.baseURL, opts...)
+}
+
+func deepSeekExtraBody(thinking *bool, overrides map[string]any) map[string]any {
+	extraBody := map[string]any{
+		"thinking":         map[string]any{"type": "enabled"},
+		"reasoning_effort": "high",
+	}
+	if thinking != nil && !*thinking {
+		extraBody["thinking"] = map[string]any{"type": "disabled"}
+		delete(extraBody, "reasoning_effort")
+	}
+	for key, value := range overrides {
+		extraBody[key] = value
+	}
+	if thinkingValue, ok := extraBody["thinking"].(map[string]any); ok {
+		if thinkingType, ok := thinkingValue["type"].(string); ok && thinkingType == "disabled" {
+			if _, overridden := overrides["reasoning_effort"]; !overridden {
+				delete(extraBody, "reasoning_effort")
+			}
+		}
+	}
+	return extraBody
 }
 
 func cloneMap(src map[string]any) map[string]any {

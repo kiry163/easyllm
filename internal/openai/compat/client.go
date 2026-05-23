@@ -303,9 +303,11 @@ func openAIChatMessages(items []model.InputItem) []map[string]any {
 		case model.UserMessageItem:
 			out = append(out, map[string]any{"role": "user", "content": textPartsToString(current.Content)})
 		case model.AssistantMessageItem:
-			out = append(out, map[string]any{"role": "assistant", "content": textPartsToString(current.Content)})
+			msg := map[string]any{"role": "assistant", "content": textPartsToString(current.Content)}
+			applyProviderStateToChatMessage(msg, current.ProviderState)
+			out = append(out, msg)
 		case model.ToolCallItem:
-			out = append(out, map[string]any{
+			msg := map[string]any{
 				"role": "assistant",
 				"tool_calls": []map[string]any{{
 					"id":   current.CallID,
@@ -315,7 +317,9 @@ func openAIChatMessages(items []model.InputItem) []map[string]any {
 						"arguments": toolArgumentsString(current.Arguments, current.RawArguments),
 					},
 				}},
-			})
+			}
+			applyProviderStateToChatMessage(msg, current.ProviderState)
+			out = append(out, msg)
 		case model.ToolResultItem:
 			out = append(out, map[string]any{
 				"role":         "tool",
@@ -353,8 +357,9 @@ func parseChatResponse(r io.Reader) (*model.ModelResponse, error) {
 	var raw struct {
 		Choices []struct {
 			Message struct {
-				Content   string `json:"content"`
-				ToolCalls []struct {
+				Content          string `json:"content"`
+				ReasoningContent string `json:"reasoning_content"`
+				ToolCalls        []struct {
 					ID       string `json:"id"`
 					Function struct {
 						Name      string `json:"name"`
@@ -394,17 +399,19 @@ func parseChatResponse(r io.Reader) (*model.ModelResponse, error) {
 			args = map[string]any{"raw": call.Function.Arguments}
 		}
 		out.Output = append(out.Output, model.ToolCallOutput{
-			CallID:       call.ID,
-			Name:         call.Function.Name,
-			Arguments:    args,
-			RawArguments: call.Function.Arguments,
-			Repaired:     repaired,
+			CallID:        call.ID,
+			Name:          call.Function.Name,
+			Arguments:     args,
+			RawArguments:  call.Function.Arguments,
+			Repaired:      repaired,
+			ProviderState: chatProviderState(raw.Choices[0].Message.ReasoningContent),
 		})
 	}
 	if len(out.Output) == 0 && raw.Choices[0].Message.Content != "" {
 		out.Output = append(out.Output, model.MessageOutput{
-			Role:    "assistant",
-			Content: []model.TextPart{{Text: raw.Choices[0].Message.Content}},
+			Role:          "assistant",
+			Content:       []model.TextPart{{Text: raw.Choices[0].Message.Content}},
+			ProviderState: chatProviderState(raw.Choices[0].Message.ReasoningContent),
 		})
 	}
 	return out, nil
@@ -553,4 +560,20 @@ func cloneMap(src map[string]any) map[string]any {
 		out[key] = value
 	}
 	return out
+}
+
+func chatProviderState(reasoningContent string) map[string]any {
+	if reasoningContent == "" {
+		return nil
+	}
+	return map[string]any{"reasoning_content": reasoningContent}
+}
+
+func applyProviderStateToChatMessage(msg map[string]any, state map[string]any) {
+	if len(state) == 0 {
+		return
+	}
+	if reasoningContent, ok := state["reasoning_content"].(string); ok && reasoningContent != "" {
+		msg["reasoning_content"] = reasoningContent
+	}
 }

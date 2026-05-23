@@ -112,6 +112,7 @@ func (c *Client) parseChatStream(handler model.StreamHandler) func(io.Reader) (*
 		}
 		resp := &model.ModelResponse{}
 		var message strings.Builder
+		var reasoning strings.Builder
 		toolCalls := map[int]*toolCallState{}
 
 		err := readSSE(r, func(data []byte) error {
@@ -119,8 +120,9 @@ func (c *Client) parseChatStream(handler model.StreamHandler) func(io.Reader) (*
 				ID      string `json:"id"`
 				Choices []struct {
 					Delta struct {
-						Content   string `json:"content"`
-						ToolCalls []struct {
+						Content          string `json:"content"`
+						ReasoningContent string `json:"reasoning_content"`
+						ToolCalls        []struct {
 							Index    int    `json:"index"`
 							ID       string `json:"id"`
 							Function struct {
@@ -166,6 +168,9 @@ func (c *Client) parseChatStream(handler model.StreamHandler) func(io.Reader) (*
 						}
 					}
 				}
+				if delta := choice.Delta.ReasoningContent; delta != "" {
+					reasoning.WriteString(delta)
+				}
 				for _, rawCall := range choice.Delta.ToolCalls {
 					current := toolCalls[rawCall.Index]
 					if current == nil {
@@ -201,19 +206,21 @@ func (c *Client) parseChatStream(handler model.StreamHandler) func(io.Reader) (*
 					args = map[string]any{"raw": rawArgs}
 				}
 				resp.Output = append(resp.Output, model.ToolCallOutput{
-					CallID:       current.CallID,
-					Name:         current.Name,
-					Arguments:    args,
-					RawArguments: rawArgs,
-					Repaired:     repaired,
+					CallID:        current.CallID,
+					Name:          current.Name,
+					Arguments:     args,
+					RawArguments:  rawArgs,
+					Repaired:      repaired,
+					ProviderState: chatProviderState(reasoning.String()),
 				})
 			}
 			return resp, nil
 		}
 		if message.Len() > 0 {
 			resp.Output = append(resp.Output, model.MessageOutput{
-				Role:    "assistant",
-				Content: []model.TextPart{{Text: message.String()}},
+				Role:          "assistant",
+				Content:       []model.TextPart{{Text: message.String()}},
+				ProviderState: chatProviderState(reasoning.String()),
 			})
 		}
 		return resp, nil

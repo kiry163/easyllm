@@ -473,6 +473,186 @@ func TestNewClientDeepSeekGenerateStreamChat(t *testing.T) {
 	}
 }
 
+func TestEngineRunKeepsClientExtraBodyAcrossToolCalls(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		requests++
+		defer r.Body.Close()
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if body["custom_flag"] != "kept" {
+			t.Fatalf("request %d missing custom_flag: %#v", requests, body["custom_flag"])
+		}
+		if body["temperature"] != 0.9 {
+			t.Fatalf("request %d missing overridden temperature: %#v", requests, body["temperature"])
+		}
+		if requests == 1 {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"choices": []map[string]any{
+					{
+						"message": map[string]any{
+							"tool_calls": []map[string]any{
+								{
+									"id":   "call_1",
+									"type": "function",
+									"function": map[string]any{
+										"name":      "submit",
+										"arguments": `{"value":"ok"}`,
+									},
+								},
+							},
+						},
+						"finish_reason": "tool_calls",
+					},
+				},
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{
+					"message":       map[string]any{"content": "done"},
+					"finish_reason": "stop",
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(Config{
+		Provider: ProviderOpenAICompatible,
+		BaseURL:  server.URL,
+		Model:    "custom-model",
+		ExtraBody: map[string]any{
+			"custom_flag": "kept",
+			"temperature": 0.9,
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewClient returned error: %v", err)
+	}
+	submitTool, err := NewTool[submitArgs](submitTool{})
+	if err != nil {
+		t.Fatalf("NewTool returned error: %v", err)
+	}
+	engine := NewEngine(client, WithTools(submitTool))
+
+	result, err := engine.Run(context.Background(), RunRequest{Input: "submit ok"})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if requests != 2 {
+		t.Fatalf("expected two model requests, got %d", requests)
+	}
+	if result.OutputText != "done" {
+		t.Fatalf("unexpected output: %q", result.OutputText)
+	}
+}
+
+func TestRunStreamDeepSeekThinkingCarriesReasoningContentAcrossToolCall(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		requests++
+		defer r.Body.Close()
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if body["reasoning_effort"] != "high" {
+			t.Fatalf("request %d missing reasoning_effort: %#v", requests, body["reasoning_effort"])
+		}
+		thinking, ok := body["thinking"].(map[string]any)
+		if !ok || thinking["type"] != "enabled" {
+			t.Fatalf("request %d missing thinking body: %#v", requests, body["thinking"])
+		}
+		if requests == 2 {
+			messages, ok := body["messages"].([]any)
+			if !ok {
+				t.Fatalf("unexpected messages payload: %#v", body["messages"])
+			}
+			found := false
+			for _, raw := range messages {
+				msg, ok := raw.(map[string]any)
+				if !ok {
+					continue
+				}
+				if msg["role"] != "assistant" {
+					continue
+				}
+				if msg["reasoning_content"] == "step-1step-2" {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("second request missing reasoning_content in assistant messages: %#v", messages)
+			}
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		if requests == 1 {
+			_, _ = w.Write([]byte(strings.Join([]string{
+				`data: {"id":"chatcmpl_1","choices":[{"delta":{"reasoning_content":"step-1","tool_calls":[{"index":0,"id":"call_1","function":{"name":"submit","arguments":"{\"value\":\""}}]}}]}`,
+				``,
+				`data: {"choices":[{"delta":{"reasoning_content":"step-2","tool_calls":[{"index":0,"function":{"arguments":"ok\"}"}}],"content":""},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}`,
+				``,
+				`data: [DONE]`,
+				``,
+			}, "\n")))
+			return
+		}
+		_, _ = w.Write([]byte(strings.Join([]string{
+			`data: {"id":"chatcmpl_2","choices":[{"delta":{"content":"done"},"finish_reason":"stop"}],"usage":{"prompt_tokens":4,"completion_tokens":1,"total_tokens":5}}`,
+			``,
+			`data: [DONE]`,
+			``,
+		}, "\n")))
+	}))
+	defer server.Close()
+
+	enableThinking := false
+	client, err := NewClient(Config{
+		Provider:       ProviderDeepSeek,
+		APIKey:         "token",
+		BaseURL:        server.URL,
+		Model:          "deepseek-v4-flash",
+		Transport:      TransportChat,
+		EnableThinking: &enableThinking,
+		ExtraBody: map[string]any{
+			"thinking":         map[string]any{"type": "enabled"},
+			"reasoning_effort": "high",
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewClient returned error: %v", err)
+	}
+
+	submitTool, err := NewTool[submitArgs](submitTool{})
+	if err != nil {
+		t.Fatalf("NewTool returned error: %v", err)
+	}
+	engine := NewEngine(client, WithTools(submitTool))
+
+	result, err := engine.RunStream(context.Background(), RunRequest{Input: "submit ok"}, nil)
+	if err != nil {
+		t.Fatalf("RunStream returned error: %v", err)
+	}
+	if requests != 2 {
+		t.Fatalf("expected two model requests, got %d", requests)
+	}
+	if result.OutputText != "done" {
+		t.Fatalf("unexpected output: %q", result.OutputText)
+	}
+}
+
 func TestNewClientBuildsDeepSeekClient(t *testing.T) {
 	client, err := NewClient(Config{
 		Provider: ProviderDeepSeek,

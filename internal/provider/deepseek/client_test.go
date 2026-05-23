@@ -34,6 +34,13 @@ func TestClientUsesProviderOwnedModelAndSamplingOptions(t *testing.T) {
 		if body["max_tokens"] != float64(512) {
 			t.Fatalf("unexpected max_tokens: %#v", body["max_tokens"])
 		}
+		thinking, ok := body["thinking"].(map[string]any)
+		if !ok || thinking["type"] != "enabled" {
+			t.Fatalf("unexpected thinking payload: %#v", body["thinking"])
+		}
+		if body["reasoning_effort"] != "high" {
+			t.Fatalf("unexpected reasoning_effort: %#v", body["reasoning_effort"])
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{
 				{
@@ -72,6 +79,81 @@ func TestClientUsesProviderOwnedModelAndSamplingOptions(t *testing.T) {
 	if resp.Provider != "deepseek" {
 		t.Fatalf("unexpected provider: %q", resp.Provider)
 	}
+}
+
+func TestClientSupportsThinkingDefaultsAndOverrides(t *testing.T) {
+	t.Run("disable thinking via config", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer r.Body.Close()
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode body: %v", err)
+			}
+			thinking, ok := body["thinking"].(map[string]any)
+			if !ok || thinking["type"] != "disabled" {
+				t.Fatalf("unexpected thinking payload: %#v", body["thinking"])
+			}
+			if _, ok := body["reasoning_effort"]; ok {
+				t.Fatalf("did not expect reasoning_effort when thinking is disabled: %#v", body["reasoning_effort"])
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"choices": []map[string]any{{"message": map[string]any{"content": "done"}, "finish_reason": "stop"}},
+			})
+		}))
+		defer server.Close()
+
+		thinking := false
+		client := NewProvider(WithAPIKey("token"), WithBaseURL(server.URL)).ChatClient(ChatClientConfig{
+			Model:    "deepseek-v4-flash",
+			Thinking: &thinking,
+		})
+		_, err := client.Generate(context.Background(), model.ModelRequest{
+			Input: []model.InputItem{
+				model.UserMessageItem{Content: []model.TextPart{{Text: "hello"}}},
+			},
+		})
+		if err != nil {
+			t.Fatalf("Generate returned error: %v", err)
+		}
+	})
+
+	t.Run("extra body overrides defaults", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer r.Body.Close()
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode body: %v", err)
+			}
+			thinking, ok := body["thinking"].(map[string]any)
+			if !ok || thinking["type"] != "disabled" {
+				t.Fatalf("unexpected thinking payload: %#v", body["thinking"])
+			}
+			if body["reasoning_effort"] != "low" {
+				t.Fatalf("unexpected reasoning_effort override: %#v", body["reasoning_effort"])
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"choices": []map[string]any{{"message": map[string]any{"content": "done"}, "finish_reason": "stop"}},
+			})
+		}))
+		defer server.Close()
+
+		client := NewProvider(
+			WithAPIKey("token"),
+			WithBaseURL(server.URL),
+			WithExtraBody(map[string]any{
+				"thinking":         map[string]any{"type": "disabled"},
+				"reasoning_effort": "low",
+			}),
+		).ChatClient(ChatClientConfig{Model: "deepseek-v4-flash"})
+		_, err := client.Generate(context.Background(), model.ModelRequest{
+			Input: []model.InputItem{
+				model.UserMessageItem{Content: []model.TextPart{{Text: "hello"}}},
+			},
+		})
+		if err != nil {
+			t.Fatalf("Generate returned error: %v", err)
+		}
+	})
 }
 
 func TestProviderSupportsRetryOption(t *testing.T) {

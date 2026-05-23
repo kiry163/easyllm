@@ -98,6 +98,8 @@ client, err := easyllm.NewClient(easyllm.Config{
 
 Retry behavior is configured from the same top-level `Config`. `MaxAttempts` controls the total number of tries, and backoff grows exponentially from `InitialBackoff` up to `MaxBackoff`.
 
+`EnableThinking` is currently a provider-level compatibility flag. Built-in providers map it only when they support a provider-specific thinking switch. Today that mainly applies to Qwen and DeepSeek.
+
 Provider-specific request body fields can be passed through `ExtraBody`. Values in `ExtraBody` are merged after normalized config fields, so they can override the final request body.
 
 ```go
@@ -111,6 +113,32 @@ client, err := easyllm.NewClient(easyllm.Config{
 	},
 })
 ```
+
+DeepSeek keeps its reasoning controls provider-local instead of adding more top-level `Config` fields:
+
+- Default request body includes `thinking: {"type":"enabled"}`.
+- Default request body includes `reasoning_effort: "high"` while thinking is enabled.
+- Setting `EnableThinking` to `false` switches the default thinking payload to `{"type":"disabled"}`.
+- `ExtraBody` can override either field when you need a provider-specific value.
+
+Example:
+
+```go
+enableThinking := false
+
+client, err := easyllm.NewClient(easyllm.Config{
+	Provider:        easyllm.ProviderDeepSeek,
+	APIKey:          os.Getenv("DEEPSEEK_API_KEY"),
+	Model:           "deepseek-v4-flash",
+	EnableThinking:  &enableThinking,
+	ExtraBody: map[string]any{
+		"thinking":         map[string]any{"type": "disabled"},
+		"reasoning_effort": "low",
+	},
+})
+```
+
+When DeepSeek returns tool calls in thinking mode, `easyllm` preserves the provider-required continuation state across the tool loop automatically. That replay stays internal to the provider adapter rather than becoming part of the public API.
 
 ## Engine
 

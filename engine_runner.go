@@ -480,15 +480,17 @@ func outputItemsToInputItems(items []model.OutputItem) []model.InputItem {
 		switch current := item.(type) {
 		case model.MessageOutput:
 			out = append(out, model.AssistantMessageItem{
-				Content: current.Content,
+				Content:       current.Content,
+				ProviderState: cloneMap(current.ProviderState),
 			})
 		case model.ToolCallOutput:
 			out = append(out, model.ToolCallItem{
-				CallID:       current.CallID,
-				Name:         current.Name,
-				Arguments:    current.Arguments,
-				RawArguments: current.RawArguments,
-				Repaired:     current.Repaired,
+				CallID:        current.CallID,
+				Name:          current.Name,
+				Arguments:     current.Arguments,
+				RawArguments:  current.RawArguments,
+				Repaired:      current.Repaired,
+				ProviderState: cloneMap(current.ProviderState),
 			})
 		}
 	}

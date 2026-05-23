@@ -37,21 +37,23 @@ type UserMessageItem struct {
 func (UserMessageItem) inputItem() {}
 
 type AssistantMessageItem struct {
-	ID       string         `json:"id"`
-	Metadata map[string]any `json:"metadata"`
-	Content  []TextPart     `json:"content"`
+	ID            string         `json:"id"`
+	Metadata      map[string]any `json:"metadata"`
+	Content       []TextPart     `json:"content"`
+	ProviderState map[string]any `json:"provider_state"`
 }
 
 func (AssistantMessageItem) inputItem() {}
 
 type ToolCallItem struct {
-	ID           string         `json:"id"`
-	CallID       string         `json:"call_id"`
-	Name         string         `json:"name"`
-	Arguments    map[string]any `json:"arguments"`
-	RawArguments string         `json:"raw_arguments"`
-	Repaired     bool           `json:"repaired"`
-	Metadata     map[string]any `json:"metadata"`
+	ID            string         `json:"id"`
+	CallID        string         `json:"call_id"`
+	Name          string         `json:"name"`
+	Arguments     map[string]any `json:"arguments"`
+	RawArguments  string         `json:"raw_arguments"`
+	Repaired      bool           `json:"repaired"`
+	ProviderState map[string]any `json:"provider_state"`
+	Metadata      map[string]any `json:"metadata"`
 }
 
 func (ToolCallItem) inputItem() {}
@@ -67,18 +69,20 @@ type ToolResultItem struct {
 func (ToolResultItem) inputItem() {}
 
 type MessageOutput struct {
-	Role    string     `json:"role"`
-	Content []TextPart `json:"content"`
+	Role          string         `json:"role"`
+	Content       []TextPart     `json:"content"`
+	ProviderState map[string]any `json:"provider_state"`
 }
 
 func (MessageOutput) outputItem() {}
 
 type ToolCallOutput struct {
-	CallID       string         `json:"call_id"`
-	Name         string         `json:"name"`
-	Arguments    map[string]any `json:"arguments"`
-	RawArguments string         `json:"raw_arguments"`
-	Repaired     bool           `json:"repaired"`
+	CallID        string         `json:"call_id"`
+	Name          string         `json:"name"`
+	Arguments     map[string]any `json:"arguments"`
+	RawArguments  string         `json:"raw_arguments"`
+	Repaired      bool           `json:"repaired"`
+	ProviderState map[string]any `json:"provider_state"`
 }
 
 func (ToolCallOutput) outputItem() {}

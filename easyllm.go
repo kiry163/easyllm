@@ -238,6 +238,7 @@ func newDeepSeekClient(config Config) (Client, error) {
 	}
 	p := deepseek.NewProvider(opts...)
 	clientConfig := deepseek.ChatClientConfig{
+		Thinking:    config.EnableThinking,
 		Model:       config.Model,
 		Temperature: config.Temperature,
 		TopP:        config.TopP,
