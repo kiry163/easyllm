@@ -217,6 +217,40 @@ fmt.Println(result.StopReason)
 
 Streaming is available on the built-in OpenAI, OpenAI-compatible, Qwen, and DeepSeek clients. `TransportResponses` streaming is available on providers that expose the responses transport; DeepSeek remains chat-only.
 
+## Image Generation
+
+Use `NewImageClient(...)` for direct image generation requests. This API is separate from `NewClient(...)` and does not use `Engine`.
+
+```go
+client, err := easyllm.NewImageClient(easyllm.Config{
+	Provider: easyllm.ProviderOpenAI,
+	APIKey:   os.Getenv("OPENAI_API_KEY"),
+	Model:    "gpt-image-1",
+})
+if err != nil {
+	panic(err)
+}
+
+resp, err := client.GenerateImage(context.Background(), easyllm.ImageRequest{
+	Prompt:       "A clean isometric diagram of a distributed job queue",
+	Size:         "1024x1024",
+	Quality:      "high",
+	OutputFormat: "png",
+})
+if err != nil {
+	panic(err)
+}
+
+imageBytes, err := base64.StdEncoding.DecodeString(resp.Images[0].B64JSON)
+if err != nil {
+	panic(err)
+}
+
+fmt.Println(len(imageBytes))
+```
+
+Phase one supports OpenAI image generation only and returns `b64_json` image payloads.
+
 ## Tool Calling
 
 Tools are strongly typed with Go structs. Field names default to `json` tags when present, then snake_case Go field names. Use the `tool` tag for descriptions, required fields, enums, and validation constraints.

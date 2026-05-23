@@ -74,6 +74,52 @@ func TestNewImageClientRequiresPromptAtCallTime(t *testing.T) {
 	}
 }
 
+func TestNewImageClientUsesExtraBodyAndRequestOptions(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		if body["quality"] != "medium" {
+			t.Fatalf("unexpected quality: %#v", body["quality"])
+		}
+		if body["background"] != "transparent" {
+			t.Fatalf("unexpected background: %#v", body["background"])
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"created": 1,
+			"data":    []map[string]any{{"b64_json": "aGVsbG8="}},
+		})
+	}))
+	defer server.Close()
+
+	client, err := NewImageClient(Config{
+		Provider: ProviderOpenAI,
+		APIKey:   "token",
+		BaseURL:  server.URL,
+		Model:    "gpt-image-1",
+		ExtraBody: map[string]any{
+			"quality":    "low",
+			"background": "opaque",
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewImageClient returned error: %v", err)
+	}
+
+	_, err = client.GenerateImage(context.Background(), ImageRequest{
+		Prompt:     "diagram",
+		Background: "transparent",
+		Options: map[string]any{
+			"quality": "medium",
+		},
+	})
+	if err != nil {
+		t.Fatalf("GenerateImage returned error: %v", err)
+	}
+}
+
 func TestNewClientBuildsOpenAICompatibleClient(t *testing.T) {
 	client, err := NewClient(Config{
 		Provider: ProviderOpenAICompatible,
