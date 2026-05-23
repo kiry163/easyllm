@@ -33,9 +33,12 @@ type Client struct {
 }
 
 type Provider struct {
-	apiKey  string
-	baseURL string
-	options []compat.Option
+	apiKey         string
+	baseURL        string
+	httpClient     *http.Client
+	retry          compat.RetryConfig
+	extraBody      map[string]any
+	defaultOptions map[string]any
 }
 
 type ProviderOption func(*Provider)
@@ -58,28 +61,60 @@ func WithBaseURL(baseURL string) ProviderOption {
 }
 
 func WithRetry(config RetryConfig) ProviderOption {
-	return func(p *Provider) { p.options = append(p.options, compat.WithRetry(config)) }
+	return func(p *Provider) {
+		if config.MaxAttempts > 0 {
+			p.retry.MaxAttempts = config.MaxAttempts
+		}
+		if config.InitialBackoff > 0 {
+			p.retry.InitialBackoff = config.InitialBackoff
+		}
+		if config.MaxBackoff > 0 {
+			p.retry.MaxBackoff = config.MaxBackoff
+		}
+	}
 }
 
 func WithHTTPClient(client *http.Client) ProviderOption {
-	return func(p *Provider) { p.options = append(p.options, compat.WithHTTPClient(client)) }
+	return func(p *Provider) {
+		if client != nil {
+			p.httpClient = client
+		}
+	}
 }
 
 func WithTimeout(timeout time.Duration) ProviderOption {
-	return func(p *Provider) { p.options = append(p.options, compat.WithTimeout(timeout)) }
+	return func(p *Provider) {
+		if timeout > 0 {
+			p.httpClient.Timeout = timeout
+		}
+	}
 }
 
 func WithExtraBody(extra map[string]any) ProviderOption {
-	return func(p *Provider) { p.options = append(p.options, compat.WithExtraBody(extra)) }
+	return func(p *Provider) {
+		p.extraBody = cloneMap(extra)
+	}
 }
 
 func WithDefaultOptions(options map[string]any) ProviderOption {
-	return func(p *Provider) { p.options = append(p.options, compat.WithDefaultOptions(options)) }
+	return func(p *Provider) {
+		p.defaultOptions = cloneMap(options)
+	}
 }
 
 func NewProvider(opts ...ProviderOption) *Provider {
 	p := &Provider{
 		baseURL: DefaultBaseURL,
+		httpClient: &http.Client{
+			Timeout: 30 * time.Second,
+		},
+		retry: compat.RetryConfig{
+			MaxAttempts:    1,
+			InitialBackoff: 100 * time.Millisecond,
+			MaxBackoff:     time.Second,
+		},
+		extraBody:      map[string]any{},
+		defaultOptions: map[string]any{},
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -108,8 +143,14 @@ func (c *Client) GenerateStream(ctx context.Context, req ModelRequest, handler m
 }
 
 func (p *Provider) modelOptions(config ChatClientConfig) []compat.Option {
-	opts := []compat.Option{compat.WithProviderName("openai"), compat.WithDefaultModel(config.Model)}
-	opts = append(opts, p.options...)
+	opts := []compat.Option{
+		compat.WithProviderName("openai"),
+		compat.WithDefaultModel(config.Model),
+		compat.WithHTTPClient(p.httpClient),
+		compat.WithRetry(p.retry),
+		compat.WithExtraBody(p.extraBody),
+		compat.WithDefaultOptions(p.defaultOptions),
+	}
 	if config.Temperature != nil {
 		opts = append(opts, compat.WithTemperature(*config.Temperature))
 	}
@@ -120,4 +161,15 @@ func (p *Provider) modelOptions(config ChatClientConfig) []compat.Option {
 		opts = append(opts, compat.WithMaxTokens(*config.MaxTokens))
 	}
 	return opts
+}
+
+func cloneMap(src map[string]any) map[string]any {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]any, len(src))
+	for key, value := range src {
+		dst[key] = value
+	}
+	return dst
 }
