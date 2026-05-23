@@ -7,17 +7,14 @@ import (
 	"strings"
 
 	"github.com/kiry163/easyllm"
-	"github.com/kiry163/easyllm/engine"
-	"github.com/kiry163/easyllm/provider"
-	"github.com/kiry163/easyllm/tool"
 )
 
 type echoClient struct{}
 
-func (echoClient) Generate(ctx context.Context, req provider.ModelRequest) (*provider.ModelResponse, error) {
+func (echoClient) Generate(ctx context.Context, req easyllm.ModelRequest) (*easyllm.ModelResponse, error) {
 	var lastUserText string
 	for _, item := range req.Input {
-		if user, ok := item.(provider.UserMessageItem); ok && len(user.Content) > 0 {
+		if user, ok := item.(easyllm.UserMessageItem); ok && len(user.Content) > 0 {
 			lastUserText = user.Content[len(user.Content)-1].Text
 		}
 	}
@@ -25,12 +22,12 @@ func (echoClient) Generate(ctx context.Context, req provider.ModelRequest) (*pro
 }
 
 func Example_basicRun() {
-	rt := engine.New(
+	rt := easyllm.NewEngine(
 		echoClient{},
-		engine.WithInstructions("Answer briefly."),
+		easyllm.WithInstructions("Answer briefly."),
 	)
 
-	result, err := rt.Run(context.Background(), engine.RunRequest{
+	result, err := rt.Run(context.Background(), easyllm.RunRequest{
 		Input: "hello",
 	})
 	if err != nil {
@@ -44,17 +41,17 @@ func Example_basicRun() {
 }
 
 func Example_sessionContinuation() {
-	session := engine.NewSession()
-	rt := engine.New(echoClient{})
+	session := easyllm.NewSession()
+	rt := easyllm.NewEngine(echoClient{})
 
-	first, err := rt.Run(context.Background(), engine.RunRequest{
+	first, err := rt.Run(context.Background(), easyllm.RunRequest{
 		Session: session,
 		Input:   "first",
 	})
 	if err != nil {
 		panic(err)
 	}
-	second, err := rt.Run(context.Background(), engine.RunRequest{
+	second, err := rt.Run(context.Background(), easyllm.RunRequest{
 		Session: session,
 		Input:   "second",
 	})
@@ -74,15 +71,15 @@ func Example_sessionContinuation() {
 
 type toolCallingClient struct{}
 
-func (toolCallingClient) Generate(ctx context.Context, req provider.ModelRequest) (*provider.ModelResponse, error) {
+func (toolCallingClient) Generate(ctx context.Context, req easyllm.ModelRequest) (*easyllm.ModelResponse, error) {
 	for _, item := range req.Input {
-		if _, ok := item.(provider.ToolResultItem); ok {
+		if _, ok := item.(easyllm.ToolResultItem); ok {
 			return messageResponse("tool result received"), nil
 		}
 	}
-	return &provider.ModelResponse{
-		Output: []provider.OutputItem{
-			provider.ToolCallOutput{
+	return &easyllm.ModelResponse{
+		Output: []easyllm.OutputItem{
+			easyllm.ToolCallOutput{
 				CallID:    "call_1",
 				Name:      "submit",
 				Arguments: map[string]any{"value": "ok"},
@@ -93,16 +90,16 @@ func (toolCallingClient) Generate(ctx context.Context, req provider.ModelRequest
 }
 
 func Example_toolCalling() {
-	submitTool, err := tool.New[submitArgs](submitTool{})
+	submitTool, err := easyllm.NewTool[submitArgs](submitTool{})
 	if err != nil {
 		panic(err)
 	}
 
-	rt := engine.New(
+	rt := easyllm.NewEngine(
 		toolCallingClient{},
-		engine.WithTools(submitTool),
+		easyllm.WithTools(submitTool),
 	)
-	result, err := rt.Run(context.Background(), engine.RunRequest{
+	result, err := rt.Run(context.Background(), easyllm.RunRequest{
 		Input: "submit ok",
 	})
 	if err != nil {
@@ -119,15 +116,15 @@ func Example_toolCalling() {
 
 type profileExtractionClient struct{}
 
-func (profileExtractionClient) Generate(ctx context.Context, req provider.ModelRequest) (*provider.ModelResponse, error) {
+func (profileExtractionClient) Generate(ctx context.Context, req easyllm.ModelRequest) (*easyllm.ModelResponse, error) {
 	for _, item := range req.Input {
-		if _, ok := item.(provider.ToolResultItem); ok {
+		if _, ok := item.(easyllm.ToolResultItem); ok {
 			return messageResponse("profile submitted"), nil
 		}
 	}
-	return &provider.ModelResponse{
-		Output: []provider.OutputItem{
-			provider.ToolCallOutput{
+	return &easyllm.ModelResponse{
+		Output: []easyllm.OutputItem{
+			easyllm.ToolCallOutput{
 				CallID: "call_profile_1",
 				Name:   "submit_student_profile",
 				Arguments: map[string]any{
@@ -172,14 +169,14 @@ func (submitProfileTool) Description() string {
 	return "Submit a structured student profile extracted from the user's self introduction"
 }
 
-func (t submitProfileTool) Run(ctx context.Context, call tool.CallContext, args submitProfileArgs) (tool.Result, error) {
+func (t submitProfileTool) Run(ctx context.Context, call easyllm.ToolCallContext, args submitProfileArgs) (easyllm.ToolResult, error) {
 	t.store.Profile = studentProfile{
 		Nickname: args.Nickname,
 		Grade:    args.Grade,
 		Gender:   args.Gender,
 		Hobbies:  args.Hobbies,
 	}
-	return tool.Result{
+	return easyllm.ToolResult{
 		Message: "student profile submitted",
 		Data: map[string]any{
 			"profile": t.store.Profile,
@@ -189,18 +186,18 @@ func (t submitProfileTool) Run(ctx context.Context, call tool.CallContext, args 
 
 func Example_submitStructuredProfileToMemory() {
 	store := &profileStore{}
-	submitProfile, err := tool.New[submitProfileArgs](submitProfileTool{store: store})
+	submitProfile, err := easyllm.NewTool[submitProfileArgs](submitProfileTool{store: store})
 	if err != nil {
 		panic(err)
 	}
 
-	rt := engine.New(
+	rt := easyllm.NewEngine(
 		profileExtractionClient{},
-		engine.WithInstructions("Extract the student profile from the user's self introduction and submit it with the tool."),
-		engine.WithTools(submitProfile),
-		engine.WithStopAfterToolCall(true),
+		easyllm.WithInstructions("Extract the student profile from the user's self introduction and submit it with the tool."),
+		easyllm.WithTools(submitProfile),
+		easyllm.WithStopAfterToolCall(true),
 	)
-	result, err := rt.Run(context.Background(), engine.RunRequest{
+	result, err := rt.Run(context.Background(), easyllm.RunRequest{
 		Input: "大家好，我叫小林，是五年级男生。我喜欢足球、机器人和画画。",
 	})
 	if err != nil {
@@ -235,8 +232,8 @@ func (submitTool) Description() string {
 	return "Submit a value"
 }
 
-func (t submitTool) Run(ctx context.Context, call tool.CallContext, args submitArgs) (tool.Result, error) {
-	return tool.Result{
+func (t submitTool) Run(ctx context.Context, call easyllm.ToolCallContext, args submitArgs) (easyllm.ToolResult, error) {
+	return easyllm.ToolResult{
 		Message: "accepted by " + t.service,
 		Data:    map[string]any{"value": args.Value},
 	}, nil
@@ -248,7 +245,7 @@ func Example_schemaTags() {
 		Days int    `tool:"name=days,desc=Forecast days,minimum=1,maximum=10"`
 	}
 
-	schema, err := tool.SchemaFor[forecastArgs]()
+	schema, err := easyllm.SchemaFor[forecastArgs]()
 	if err != nil {
 		panic(err)
 	}
@@ -305,12 +302,12 @@ func Example_newClient() {
 	// true
 }
 
-func messageResponse(text string) *provider.ModelResponse {
-	return &provider.ModelResponse{
-		Output: []provider.OutputItem{
-			provider.MessageOutput{
+func messageResponse(text string) *easyllm.ModelResponse {
+	return &easyllm.ModelResponse{
+		Output: []easyllm.OutputItem{
+			easyllm.MessageOutput{
 				Role:    "assistant",
-				Content: []provider.TextPart{{Text: text}},
+				Content: []easyllm.TextPart{{Text: text}},
 			},
 		},
 		FinishReason: "stop",

@@ -1,16 +1,14 @@
-package engine
+package easyllm
 
 import (
 	"context"
 	"fmt"
 
-	"github.com/kiry163/easyllm"
-	"github.com/kiry163/easyllm/provider"
-	"github.com/kiry163/easyllm/tool"
+	provider "github.com/kiry163/easyllm/internal/model"
 )
 
 type runConfig struct {
-	tools             []tool.Tool
+	tools             []Tool
 	hooks             Hooks
 	maxModelCalls     int
 	stopAfterToolCall bool
@@ -36,11 +34,11 @@ type RunResult struct {
 
 type ToolCallResult struct {
 	Call   provider.ToolCallOutput
-	Result tool.Result
+	Result ToolResult
 	Err    error
 }
 
-func run(ctx context.Context, client easyllm.Client, session *Session, metadata map[string]any, cfg runConfig) (retResult *RunResult, retErr error) {
+func run(ctx context.Context, client Client, session *Session, metadata map[string]any, cfg runConfig) (retResult *RunResult, retErr error) {
 	if session == nil {
 		return nil, fmt.Errorf("session is required")
 	}
@@ -71,7 +69,7 @@ func run(ctx context.Context, client easyllm.Client, session *Session, metadata 
 		}
 	}()
 
-	toolMap := make(map[string]tool.Tool, len(cfg.tools))
+	toolMap := make(map[string]Tool, len(cfg.tools))
 	for _, current := range cfg.tools {
 		if current == nil {
 			continue
@@ -80,9 +78,9 @@ func run(ctx context.Context, client easyllm.Client, session *Session, metadata 
 	}
 
 	for iteration := 1; iteration <= cfg.maxModelCalls; iteration++ {
-		modelReq := easyllm.ModelRequest{
+		modelReq := ModelRequest{
 			Input:    session.ItemsView(),
-			Tools:    tool.DefinitionsFromTools(cfg.tools),
+			Tools:    definitionsFromTools(cfg.tools),
 			Metadata: cloneMap(metadata),
 		}
 		if cfg.hooks.OnModelRequest != nil {
@@ -140,7 +138,7 @@ func run(ctx context.Context, client easyllm.Client, session *Session, metadata 
 				}
 				runTool := toolMap[out.Name]
 				if runTool == nil {
-					toolErr := tool.NewPayloadError("tool not found", map[string]any{
+					toolErr := NewPayloadError("tool not found", map[string]any{
 						"status":  "error",
 						"code":    "tool_not_found",
 						"tool":    out.Name,
@@ -149,7 +147,7 @@ func run(ctx context.Context, client easyllm.Client, session *Session, metadata 
 					session.AppendItems(provider.ToolResultItem{
 						CallID:  out.CallID,
 						Name:    out.Name,
-						Content: tool.EncodeToolError(out.Name, toolErr),
+						Content: encodeToolError(out.Name, toolErr),
 					})
 					if cfg.hooks.OnToolCallFinish != nil {
 						if err := cfg.hooks.OnToolCallFinish(ToolCallFinishEvent{
@@ -164,7 +162,7 @@ func run(ctx context.Context, client easyllm.Client, session *Session, metadata 
 					}
 					continue
 				}
-				outcome, invokeErr := runTool.Invoke(ctx, tool.CallContext{
+				outcome, invokeErr := runTool.Invoke(ctx, ToolCallContext{
 					CallID:    out.CallID,
 					Name:      out.Name,
 					Iteration: iteration,
@@ -177,9 +175,9 @@ func run(ctx context.Context, client easyllm.Client, session *Session, metadata 
 				})
 				message := ""
 				if invokeErr != nil {
-					message = tool.EncodeToolError(out.Name, invokeErr)
+					message = encodeToolError(out.Name, invokeErr)
 				} else {
-					message = tool.EncodeToolSuccess(out.Name, outcome)
+					message = encodeToolSuccess(out.Name, outcome)
 				}
 				session.AppendItems(provider.ToolResultItem{
 					CallID:  out.CallID,

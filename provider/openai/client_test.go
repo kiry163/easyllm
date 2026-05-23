@@ -9,9 +9,6 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
-
-	"github.com/kiry163/easyllm/provider"
-	"github.com/kiry163/easyllm/tool"
 )
 
 func TestChatClientRetriesAndNormalizesToolCalls(t *testing.T) {
@@ -65,11 +62,11 @@ func TestChatClientRetriesAndNormalizesToolCalls(t *testing.T) {
 
 	openaiProvider := NewProvider(WithAPIKey("token"), WithBaseURL(server.URL), WithRetry(RetryConfig{MaxAttempts: 2}))
 	client := openaiProvider.ChatClient(ChatClientConfig{})
-	resp, err := client.Generate(context.Background(), provider.ModelRequest{
+	resp, err := client.Generate(context.Background(), ModelRequest{
 		Model: "gpt-test",
-		Input: []provider.InputItem{
-			provider.UserMessageItem{
-				Content: []provider.TextPart{{Text: "hello"}},
+		Input: []InputItem{
+			UserMessageItem{
+				Content: []TextPart{{Text: "hello"}},
 			},
 		},
 	})
@@ -94,7 +91,7 @@ func TestChatClientRetriesAndNormalizesToolCalls(t *testing.T) {
 	if len(resp.Output) != 1 {
 		t.Fatalf("unexpected output count: %d", len(resp.Output))
 	}
-	call, ok := resp.Output[0].(provider.ToolCallOutput)
+	call, ok := resp.Output[0].(ToolCallOutput)
 	if !ok {
 		t.Fatalf("unexpected output type: %T", resp.Output[0])
 	}
@@ -140,11 +137,11 @@ func TestResponsesClientNormalizesAssistantMessage(t *testing.T) {
 
 	openaiProvider := NewProvider(WithAPIKey("token"), WithBaseURL(server.URL))
 	client := openaiProvider.ResponsesClient(ResponsesClientConfig{})
-	resp, err := client.Generate(context.Background(), provider.ModelRequest{
+	resp, err := client.Generate(context.Background(), ModelRequest{
 		Model: "gpt-test",
-		Input: []provider.InputItem{
-			provider.UserMessageItem{
-				Content: []provider.TextPart{{Text: "hello"}},
+		Input: []InputItem{
+			UserMessageItem{
+				Content: []TextPart{{Text: "hello"}},
 			},
 		},
 	})
@@ -157,7 +154,7 @@ func TestResponsesClientNormalizesAssistantMessage(t *testing.T) {
 	if len(resp.Output) != 1 {
 		t.Fatalf("unexpected output count: %d", len(resp.Output))
 	}
-	msg, ok := resp.Output[0].(provider.MessageOutput)
+	msg, ok := resp.Output[0].(MessageOutput)
 	if !ok {
 		t.Fatalf("unexpected output type: %T", resp.Output[0])
 	}
@@ -202,11 +199,11 @@ func TestResponsesClientParsesCachedUsageDetails(t *testing.T) {
 
 	openaiProvider := NewProvider(WithAPIKey("token"), WithBaseURL(server.URL))
 	client := openaiProvider.ResponsesClient(ResponsesClientConfig{})
-	resp, err := client.Generate(context.Background(), provider.ModelRequest{
+	resp, err := client.Generate(context.Background(), ModelRequest{
 		Model: "gpt-test",
-		Input: []provider.InputItem{
-			provider.UserMessageItem{
-				Content: []provider.TextPart{{Text: "hello"}},
+		Input: []InputItem{
+			UserMessageItem{
+				Content: []TextPart{{Text: "hello"}},
 			},
 		},
 	})
@@ -245,11 +242,11 @@ func TestChatClientParsesCachedUsageDetails(t *testing.T) {
 
 	openaiProvider := NewProvider(WithAPIKey("token"), WithBaseURL(server.URL))
 	client := openaiProvider.ChatClient(ChatClientConfig{})
-	resp, err := client.Generate(context.Background(), provider.ModelRequest{
+	resp, err := client.Generate(context.Background(), ModelRequest{
 		Model: "gpt-test",
-		Input: []provider.InputItem{
-			provider.UserMessageItem{
-				Content: []provider.TextPart{{Text: "hello"}},
+		Input: []InputItem{
+			UserMessageItem{
+				Content: []TextPart{{Text: "hello"}},
 			},
 		},
 	})
@@ -290,9 +287,9 @@ func TestChatClientUsesDefaultModelAndExtraBody(t *testing.T) {
 		WithExtraBody(map[string]any{"enable_thinking": false}),
 	)
 	client := openaiProvider.ChatClient(ChatClientConfig{Model: "default-model"})
-	resp, err := client.Generate(context.Background(), provider.ModelRequest{
-		Input: []provider.InputItem{
-			provider.UserMessageItem{Content: []provider.TextPart{{Text: "hello"}}},
+	resp, err := client.Generate(context.Background(), ModelRequest{
+		Input: []InputItem{
+			UserMessageItem{Content: []TextPart{{Text: "hello"}}},
 		},
 	})
 	if err != nil {
@@ -339,9 +336,9 @@ func TestChatClientUsesDefaultSamplingOptions(t *testing.T) {
 		TopP:        &topP,
 		MaxTokens:   &maxTokens,
 	})
-	_, err := client.Generate(context.Background(), provider.ModelRequest{
-		Input: []provider.InputItem{
-			provider.UserMessageItem{Content: []provider.TextPart{{Text: "hello"}}},
+	_, err := client.Generate(context.Background(), ModelRequest{
+		Input: []InputItem{
+			UserMessageItem{Content: []TextPart{{Text: "hello"}}},
 		},
 	})
 	if err != nil {
@@ -369,9 +366,9 @@ func TestProviderSupportsTimeoutOption(t *testing.T) {
 		WithTimeout(10*time.Millisecond),
 	)
 	client := openaiProvider.ChatClient(ChatClientConfig{Model: "gpt-test"})
-	_, err := client.Generate(context.Background(), provider.ModelRequest{
-		Input: []provider.InputItem{
-			provider.UserMessageItem{Content: []provider.TextPart{{Text: "hello"}}},
+	_, err := client.Generate(context.Background(), ModelRequest{
+		Input: []InputItem{
+			UserMessageItem{Content: []TextPart{{Text: "hello"}}},
 		},
 	})
 	if err == nil {
@@ -423,11 +420,11 @@ func TestChatClientRendersToolsAsNestedFunctionDefinitions(t *testing.T) {
 
 	openaiProvider := NewProvider(WithAPIKey("token"), WithBaseURL(server.URL))
 	client := openaiProvider.ChatClient(ChatClientConfig{Model: "gpt-test"})
-	_, err := client.Generate(context.Background(), provider.ModelRequest{
-		Input: []provider.InputItem{
-			provider.UserMessageItem{Content: []provider.TextPart{{Text: "hello"}}},
+	_, err := client.Generate(context.Background(), ModelRequest{
+		Input: []InputItem{
+			UserMessageItem{Content: []TextPart{{Text: "hello"}}},
 		},
-		Tools: []tool.Definition{
+		Tools: []ToolDefinition{
 			{
 				Name:        "get_weather",
 				Description: "Get weather",
@@ -488,11 +485,11 @@ func TestResponsesClientRendersToolsAsFlatFunctionDefinitions(t *testing.T) {
 
 	openaiProvider := NewProvider(WithAPIKey("token"), WithBaseURL(server.URL))
 	client := openaiProvider.ResponsesClient(ResponsesClientConfig{Model: "gpt-test"})
-	_, err := client.Generate(context.Background(), provider.ModelRequest{
-		Input: []provider.InputItem{
-			provider.UserMessageItem{Content: []provider.TextPart{{Text: "hello"}}},
+	_, err := client.Generate(context.Background(), ModelRequest{
+		Input: []InputItem{
+			UserMessageItem{Content: []TextPart{{Text: "hello"}}},
 		},
-		Tools: []tool.Definition{
+		Tools: []ToolDefinition{
 			{
 				Name:        "get_weather",
 				Description: "Get weather",

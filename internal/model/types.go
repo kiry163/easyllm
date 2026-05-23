@@ -1,6 +1,4 @@
-package provider
-
-import "github.com/kiry163/easyllm/tool"
+package model
 
 type Usage struct {
 	InputTokens       int
@@ -85,10 +83,17 @@ type ToolCallOutput struct {
 
 func (ToolCallOutput) outputItem() {}
 
+type ToolDefinition struct {
+	Name        string
+	Description string
+	Parameters  map[string]any
+	Strict      *bool
+}
+
 type ModelRequest struct {
 	Model    string
 	Input    []InputItem
-	Tools    []tool.Definition
+	Tools    []ToolDefinition
 	Options  map[string]any
 	Metadata map[string]any
 }

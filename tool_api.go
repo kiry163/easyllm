@@ -1,33 +1,31 @@
-package tool
+package easyllm
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+
+	"github.com/kiry163/easyllm/internal/jsonrepair"
+	provider "github.com/kiry163/easyllm/internal/model"
 )
 
-type Definition struct {
-	Name        string
-	Description string
-	Parameters  map[string]any
-	Strict      *bool
-}
+type ToolDefinition = provider.ToolDefinition
 
-type CallContext struct {
+type ToolCallContext struct {
 	CallID    string
 	Name      string
 	Iteration int
 	Metadata  map[string]any
 }
 
-type Result struct {
+type ToolResult struct {
 	Message string
 	Data    map[string]any
 }
 
 type Tool interface {
-	Definition() Definition
-	Invoke(context.Context, CallContext, map[string]any) (Result, error)
+	Definition() ToolDefinition
+	Invoke(context.Context, ToolCallContext, map[string]any) (ToolResult, error)
 }
 
 type runnerMetadata interface {
@@ -37,28 +35,28 @@ type runnerMetadata interface {
 
 type toolRunner[Args any] interface {
 	runnerMetadata
-	Run(context.Context, CallContext, Args) (Result, error)
+	Run(context.Context, ToolCallContext, Args) (ToolResult, error)
 }
 
 type runnableTool[Args any, Runner toolRunner[Args]] struct {
-	definition Definition
+	definition ToolDefinition
 	runner     Runner
 }
 
-type Option func(*Definition)
+type ToolOption func(*ToolDefinition)
 
-func WithStrict(strict bool) Option {
-	return func(def *Definition) {
+func WithStrict(strict bool) ToolOption {
+	return func(def *ToolDefinition) {
 		def.Strict = &strict
 	}
 }
 
-func New[Args any, Runner toolRunner[Args]](runner Runner, opts ...Option) (Tool, error) {
+func NewTool[Args any, Runner toolRunner[Args]](runner Runner, opts ...ToolOption) (Tool, error) {
 	parameters, err := SchemaFor[Args]()
 	if err != nil {
 		return nil, err
 	}
-	definition := Definition{
+	definition := ToolDefinition{
 		Name:        runner.Name(),
 		Description: runner.Description(),
 		Parameters:  parameters,
@@ -74,16 +72,16 @@ func New[Args any, Runner toolRunner[Args]](runner Runner, opts ...Option) (Tool
 	}, nil
 }
 
-func (t *runnableTool[Args, Runner]) Definition() Definition {
+func (t *runnableTool[Args, Runner]) Definition() ToolDefinition {
 	return t.definition
 }
 
-func (t *runnableTool[Args, Runner]) Invoke(ctx context.Context, call CallContext, raw map[string]any) (Result, error) {
+func (t *runnableTool[Args, Runner]) Invoke(ctx context.Context, call ToolCallContext, raw map[string]any) (ToolResult, error) {
 	if raw == nil {
 		raw = map[string]any{}
 	}
 	if rawText, ok := raw["raw"].(string); ok && len(raw) == 1 {
-		decoded, _, err := DecodeJSONObjectString(rawText)
+		decoded, _, err := jsonrepair.DecodeJSONObjectString(rawText)
 		if err == nil {
 			raw = decoded
 		}
@@ -95,16 +93,16 @@ func (t *runnableTool[Args, Runner]) Invoke(ctx context.Context, call CallContex
 			"code":    "invalid_arguments",
 			"message": err.Error(),
 		}
-		return Result{}, &PayloadError{Err: err, Payload: payload}
+		return ToolResult{}, &PayloadError{Err: err, Payload: payload}
 	}
 	return t.runner.Run(ctx, call, args)
 }
 
-func DefinitionsFromTools(tools []Tool) []Definition {
+func definitionsFromTools(tools []Tool) []ToolDefinition {
 	if len(tools) == 0 {
 		return nil
 	}
-	definitions := make([]Definition, 0, len(tools))
+	definitions := make([]ToolDefinition, 0, len(tools))
 	for _, current := range tools {
 		if current == nil {
 			continue
@@ -114,7 +112,7 @@ func DefinitionsFromTools(tools []Tool) []Definition {
 	return definitions
 }
 
-func EncodeToolSuccess(toolName string, result Result) string {
+func encodeToolSuccess(toolName string, result ToolResult) string {
 	payload := map[string]any{
 		"status": "ok",
 		"tool":   toolName,
@@ -129,7 +127,7 @@ func EncodeToolSuccess(toolName string, result Result) string {
 	return string(data)
 }
 
-func EncodeToolError(toolName string, err error) string {
+func encodeToolError(toolName string, err error) string {
 	payload := map[string]any{
 		"status":  "error",
 		"tool":    toolName,

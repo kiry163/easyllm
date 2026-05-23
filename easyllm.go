@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
+	provider "github.com/kiry163/easyllm/internal/model"
 	"github.com/kiry163/easyllm/internal/provider/deepseek"
 	"github.com/kiry163/easyllm/internal/provider/qwen"
-	"github.com/kiry163/easyllm/provider"
 	"github.com/kiry163/easyllm/provider/openai"
 )
 

@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/kiry163/easyllm"
-	"github.com/kiry163/easyllm/tool"
 )
 
 func TestParseConfigLoadsQwenValuesFromDotEnv(t *testing.T) {
@@ -95,7 +94,7 @@ func TestParseConfigRejectsUnsupportedTransport(t *testing.T) {
 
 func TestWeatherToolReturnsFixedBeijingWeather(t *testing.T) {
 	runTool := weatherTool()
-	result, err := runTool.Invoke(nil, tool.CallContext{Name: "get_weather"}, map[string]any{
+	result, err := runTool.Invoke(nil, easyllm.ToolCallContext{Name: "get_weather"}, map[string]any{
 		"city": "北京",
 	})
 	if err != nil {

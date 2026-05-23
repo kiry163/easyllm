@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/kiry163/easyllm/provider"
-	"github.com/kiry163/easyllm/provider/openai/compat"
+	provider "github.com/kiry163/easyllm/internal/model"
+	"github.com/kiry163/easyllm/internal/openai/compat"
 )
 
 const DefaultBaseURL = "https://dashscope.aliyuncs.com/compatible-mode/v1"

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kiry163/easyllm/provider"
+	provider "github.com/kiry163/easyllm/internal/model"
 )
 
 func TestClientUsesProviderOwnedModelAndSamplingOptions(t *testing.T) {

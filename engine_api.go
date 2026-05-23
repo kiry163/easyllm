@@ -1,17 +1,15 @@
-package engine
+package easyllm
 
 import (
 	"context"
 
-	"github.com/kiry163/easyllm"
-	"github.com/kiry163/easyllm/provider"
-	"github.com/kiry163/easyllm/tool"
+	provider "github.com/kiry163/easyllm/internal/model"
 )
 
 type Engine struct {
-	client            easyllm.Client
+	client            Client
 	instructions      string
-	tools             []tool.Tool
+	tools             []Tool
 	hooks             Hooks
 	maxModelCalls     int
 	stopAfterToolCall bool
@@ -23,27 +21,27 @@ type RunRequest struct {
 	Metadata map[string]any
 }
 
-type Option func(*Engine)
+type EngineOption func(*Engine)
 
-func WithInstructions(text string) Option {
+func WithInstructions(text string) EngineOption {
 	return func(e *Engine) {
 		e.instructions = text
 	}
 }
 
-func WithTools(tools ...tool.Tool) Option {
+func WithTools(tools ...Tool) EngineOption {
 	return func(e *Engine) {
-		e.tools = append([]tool.Tool(nil), tools...)
+		e.tools = append([]Tool(nil), tools...)
 	}
 }
 
-func WithHooks(hooks Hooks) Option {
+func WithHooks(hooks Hooks) EngineOption {
 	return func(e *Engine) {
 		e.hooks = hooks
 	}
 }
 
-func WithMaxModelCalls(n int) Option {
+func WithMaxModelCalls(n int) EngineOption {
 	return func(e *Engine) {
 		if n > 0 {
 			e.maxModelCalls = n
@@ -51,13 +49,13 @@ func WithMaxModelCalls(n int) Option {
 	}
 }
 
-func WithStopAfterToolCall(stop bool) Option {
+func WithStopAfterToolCall(stop bool) EngineOption {
 	return func(e *Engine) {
 		e.stopAfterToolCall = stop
 	}
 }
 
-func New(client easyllm.Client, opts ...Option) *Engine {
+func NewEngine(client Client, opts ...EngineOption) *Engine {
 	engine := &Engine{
 		client:        client,
 		maxModelCalls: 3,

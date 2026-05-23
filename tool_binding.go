@@ -1,8 +1,10 @@
-package tool
+package easyllm
 
 import (
 	"fmt"
 	"reflect"
+
+	"github.com/kiry163/easyllm/internal/jsonrepair"
 )
 
 func BindArgs[T any](raw map[string]any) (T, error) {
@@ -230,7 +232,7 @@ func repairStructuredStringValue(targetType reflect.Type, raw any) any {
 
 	switch targetType.Kind() {
 	case reflect.Struct:
-		parsed, _, err := DecodeJSONObjectString(text)
+		parsed, _, err := jsonrepair.DecodeJSONObjectString(text)
 		if err == nil {
 			return parsed
 		}
@@ -238,7 +240,7 @@ func repairStructuredStringValue(targetType reflect.Type, raw any) any {
 		if derefType(targetType.Elem()).Kind() != reflect.Struct {
 			return raw
 		}
-		parsed, _, err := DecodeJSONArrayString(text)
+		parsed, _, err := jsonrepair.DecodeJSONArrayString(text)
 		if err != nil {
 			return raw
 		}

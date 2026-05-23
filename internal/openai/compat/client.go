@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kiry163/easyllm/provider"
-	"github.com/kiry163/easyllm/tool"
+	"github.com/kiry163/easyllm/internal/jsonrepair"
+	provider "github.com/kiry163/easyllm/internal/model"
 )
 
 type Transport string
@@ -376,7 +376,7 @@ func parseChatResponse(r io.Reader) (*provider.ModelResponse, error) {
 	}
 	out.FinishReason = raw.Choices[0].FinishReason
 	for _, call := range raw.Choices[0].Message.ToolCalls {
-		args, repaired, err := tool.DecodeJSONObjectString(call.Function.Arguments)
+		args, repaired, err := jsonrepair.DecodeJSONObjectString(call.Function.Arguments)
 		if err != nil {
 			args = map[string]any{"raw": call.Function.Arguments}
 		}
@@ -434,7 +434,7 @@ func parseResponsesResponse(r io.Reader) (*provider.ModelResponse, error) {
 	for _, item := range raw.Output {
 		switch item.Type {
 		case "function_call":
-			args, repaired, err := tool.DecodeJSONObjectString(item.Arguments)
+			args, repaired, err := jsonrepair.DecodeJSONObjectString(item.Arguments)
 			if err != nil {
 				args = map[string]any{"raw": item.Arguments}
 			}
@@ -458,7 +458,7 @@ func parseResponsesResponse(r io.Reader) (*provider.ModelResponse, error) {
 	return out, nil
 }
 
-func openAIChatTools(tools []tool.Definition) []map[string]any {
+func openAIChatTools(tools []provider.ToolDefinition) []map[string]any {
 	if len(tools) == 0 {
 		return nil
 	}
@@ -480,7 +480,7 @@ func openAIChatTools(tools []tool.Definition) []map[string]any {
 	return out
 }
 
-func openAIResponsesTools(tools []tool.Definition) []map[string]any {
+func openAIResponsesTools(tools []provider.ToolDefinition) []map[string]any {
 	if len(tools) == 0 {
 		return nil
 	}

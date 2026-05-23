@@ -1,9 +1,11 @@
-package tool
+package easyllm_test
 
 import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/kiry163/easyllm"
 )
 
 type submitArgs struct {
@@ -20,20 +22,20 @@ func (submitRunner) Description() string {
 	return "submit payload"
 }
 
-func (submitRunner) Run(ctx context.Context, call CallContext, args submitArgs) (Result, error) {
-	return Result{
+func (submitRunner) Run(ctx context.Context, call easyllm.ToolCallContext, args submitArgs) (easyllm.ToolResult, error) {
+	return easyllm.ToolResult{
 		Message: "done",
 		Data:    map[string]any{"value": args.Value},
 	}, nil
 }
 
 func TestNewRepairsQuotedJSONObjectArguments(t *testing.T) {
-	submitTool, err := New[submitArgs](submitRunner{})
+	submitTool, err := easyllm.NewTool[submitArgs](submitRunner{})
 	if err != nil {
 		t.Fatalf("New returned error: %v", err)
 	}
 
-	result, err := submitTool.Invoke(context.Background(), CallContext{Name: "submit"}, map[string]any{
+	result, err := submitTool.Invoke(context.Background(), easyllm.ToolCallContext{Name: "submit"}, map[string]any{
 		"raw": "\"{\\\"value\\\":\\\"ok\\\"}\"",
 	})
 	if err != nil {
@@ -45,7 +47,7 @@ func TestNewRepairsQuotedJSONObjectArguments(t *testing.T) {
 }
 
 func TestNewUsesToolMetadataMethods(t *testing.T) {
-	submitTool, err := New[submitArgs](submitRunner{})
+	submitTool, err := easyllm.NewTool[submitArgs](submitRunner{})
 	if err != nil {
 		t.Fatalf("New returned error: %v", err)
 	}
@@ -56,7 +58,7 @@ func TestNewUsesToolMetadataMethods(t *testing.T) {
 }
 
 func TestNewSupportsStrictOption(t *testing.T) {
-	submitTool, err := New[submitArgs](submitRunner{}, WithStrict(true))
+	submitTool, err := easyllm.NewTool[submitArgs](submitRunner{}, easyllm.WithStrict(true))
 	if err != nil {
 		t.Fatalf("New returned error: %v", err)
 	}
@@ -72,7 +74,7 @@ func TestSchemaForSupportsEnumRangeAndClosedObjects(t *testing.T) {
 		Days int    `tool:"name=days,desc=Forecast days,minimum=1,maximum=10"`
 	}
 
-	schema, err := SchemaFor[forecastArgs]()
+	schema, err := easyllm.SchemaFor[forecastArgs]()
 	if err != nil {
 		t.Fatalf("SchemaFor returned error: %v", err)
 	}
@@ -113,7 +115,7 @@ func TestSchemaForSupportsStringAndArrayLengthConstraints(t *testing.T) {
 		Hobbies  []string `tool:"name=hobbies,required,minItems=1,maxItems=5"`
 	}
 
-	schema, err := SchemaFor[profileArgs]()
+	schema, err := easyllm.SchemaFor[profileArgs]()
 	if err != nil {
 		t.Fatalf("SchemaFor returned error: %v", err)
 	}
@@ -184,7 +186,7 @@ func TestBindArgsValidatesEnumRangeAndUnknownFields(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := BindArgs[forecastArgs](tt.raw)
+			_, err := easyllm.BindArgs[forecastArgs](tt.raw)
 			if err == nil {
 				t.Fatalf("expected error")
 			}
@@ -242,7 +244,7 @@ func TestBindArgsValidatesStringAndArrayLengthConstraints(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := BindArgs[profileArgs](tt.raw)
+			_, err := easyllm.BindArgs[profileArgs](tt.raw)
 			if err == nil {
 				t.Fatalf("expected error")
 			}

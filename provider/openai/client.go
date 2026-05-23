@@ -1,15 +1,34 @@
 package openai
 
 import (
+	"context"
 	"net/http"
 	"time"
 
-	"github.com/kiry163/easyllm/provider"
-	"github.com/kiry163/easyllm/provider/openai/compat"
+	provider "github.com/kiry163/easyllm/internal/model"
+	"github.com/kiry163/easyllm/internal/openai/compat"
 )
 
-type Client = compat.Client
+type ModelRequest = provider.ModelRequest
+type ModelResponse = provider.ModelResponse
+type InputItem = provider.InputItem
+type OutputItem = provider.OutputItem
+type Usage = provider.Usage
+type TextPart = provider.TextPart
+type SystemMessageItem = provider.SystemMessageItem
+type UserMessageItem = provider.UserMessageItem
+type AssistantMessageItem = provider.AssistantMessageItem
+type ToolCallItem = provider.ToolCallItem
+type ToolResultItem = provider.ToolResultItem
+type MessageOutput = provider.MessageOutput
+type ToolCallOutput = provider.ToolCallOutput
+type ToolDefinition = provider.ToolDefinition
+
 type RetryConfig = compat.RetryConfig
+
+type Client struct {
+	inner *compat.Client
+}
 
 type Provider struct {
 	apiKey  string
@@ -66,14 +85,18 @@ func NewProvider(opts ...ProviderOption) *Provider {
 	return p
 }
 
-func (p *Provider) ChatClient(config ChatClientConfig) provider.Client {
+func (p *Provider) ChatClient(config ChatClientConfig) *Client {
 	opts := p.modelOptions(config)
-	return compat.NewChatClient(p.apiKey, p.baseURL, opts...)
+	return &Client{inner: compat.NewChatClient(p.apiKey, p.baseURL, opts...)}
 }
 
-func (p *Provider) ResponsesClient(config ResponsesClientConfig) provider.Client {
+func (p *Provider) ResponsesClient(config ResponsesClientConfig) *Client {
 	opts := p.modelOptions(ChatClientConfig(config))
-	return compat.NewResponsesClient(p.apiKey, p.baseURL, opts...)
+	return &Client{inner: compat.NewResponsesClient(p.apiKey, p.baseURL, opts...)}
+}
+
+func (c *Client) Generate(ctx context.Context, req ModelRequest) (*ModelResponse, error) {
+	return c.inner.Generate(ctx, req)
 }
 
 func (p *Provider) modelOptions(config ChatClientConfig) []compat.Option {

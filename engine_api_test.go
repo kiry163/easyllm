@@ -1,12 +1,11 @@
-package engine
+package easyllm
 
 import (
 	"context"
 	"errors"
 	"testing"
 
-	"github.com/kiry163/easyllm/provider"
-	"github.com/kiry163/easyllm/tool"
+	provider "github.com/kiry163/easyllm/internal/model"
 )
 
 type fakeClient struct{}
@@ -26,12 +25,12 @@ func (fakeClient) Generate(ctx context.Context, req provider.ModelRequest) (*pro
 }
 
 func TestNewRunAppendsInputAndReturnsOutput(t *testing.T) {
-	engine := New(
+	runtime := NewEngine(
 		fakeClient{},
 		WithInstructions("be helpful"),
 	)
 
-	result, err := engine.Run(context.Background(), RunRequest{Input: "hello"})
+	result, err := runtime.Run(context.Background(), RunRequest{Input: "hello"})
 	if err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
@@ -83,23 +82,23 @@ func (submitTool) Description() string {
 	return "submit payload"
 }
 
-func (submitTool) Run(ctx context.Context, call tool.CallContext, args submitArgs) (tool.Result, error) {
-	return tool.Result{Message: "submitted"}, nil
+func (submitTool) Run(ctx context.Context, call ToolCallContext, args submitArgs) (ToolResult, error) {
+	return ToolResult{Message: "submitted"}, nil
 }
 
 func TestRunCanStopAfterSuccessfulToolCallFromEngineOption(t *testing.T) {
-	runTool, err := tool.New[submitArgs](submitTool{})
+	runTool, err := NewTool[submitArgs](submitTool{})
 	if err != nil {
 		t.Fatalf("New returned error: %v", err)
 	}
 	client := &toolCallingClient{}
-	engine := New(
+	runtime := NewEngine(
 		client,
 		WithTools(runTool),
 		WithStopAfterToolCall(true),
 	)
 
-	result, err := engine.Run(context.Background(), RunRequest{Input: "submit"})
+	result, err := runtime.Run(context.Background(), RunRequest{Input: "submit"})
 	if err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
@@ -115,18 +114,18 @@ func TestRunCanStopAfterSuccessfulToolCallFromEngineOption(t *testing.T) {
 }
 
 func TestRunUsesDefaultMaxModelCallsFromOptions(t *testing.T) {
-	runTool, err := tool.New[submitArgs](submitTool{})
+	runTool, err := NewTool[submitArgs](submitTool{})
 	if err != nil {
 		t.Fatalf("New returned error: %v", err)
 	}
 	client := &toolCallingClient{}
-	engine := New(
+	runtime := NewEngine(
 		client,
 		WithTools(runTool),
 		WithMaxModelCalls(1),
 	)
 
-	result, err := engine.Run(context.Background(), RunRequest{Input: "submit"})
+	result, err := runtime.Run(context.Background(), RunRequest{Input: "submit"})
 	if err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
@@ -142,17 +141,17 @@ func TestRunUsesDefaultMaxModelCallsFromOptions(t *testing.T) {
 }
 
 func TestRunReturnsToolResults(t *testing.T) {
-	runTool, err := tool.New[submitArgs](submitTool{})
+	runTool, err := NewTool[submitArgs](submitTool{})
 	if err != nil {
 		t.Fatalf("New returned error: %v", err)
 	}
-	engine := New(
+	runtime := NewEngine(
 		&toolCallingClient{},
 		WithTools(runTool),
 		WithStopAfterToolCall(true),
 	)
 
-	result, err := engine.Run(context.Background(), RunRequest{Input: "submit"})
+	result, err := runtime.Run(context.Background(), RunRequest{Input: "submit"})
 	if err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
@@ -168,9 +167,9 @@ func TestRunReturnsToolResults(t *testing.T) {
 }
 
 func TestRunCreatesSessionWhenNil(t *testing.T) {
-	engine := New(fakeClient{})
+	runtime := NewEngine(fakeClient{})
 
-	result, err := engine.Run(context.Background(), RunRequest{Input: "hello"})
+	result, err := runtime.Run(context.Background(), RunRequest{Input: "hello"})
 	if err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
@@ -248,22 +247,22 @@ func (failingTool) Description() string {
 	return "submit payload"
 }
 
-func (failingTool) Run(ctx context.Context, call tool.CallContext, args submitArgs) (tool.Result, error) {
-	return tool.Result{}, errors.New("submit failed")
+func (failingTool) Run(ctx context.Context, call ToolCallContext, args submitArgs) (ToolResult, error) {
+	return ToolResult{}, errors.New("submit failed")
 }
 
 func TestRunReturnsResultWhenToolFails(t *testing.T) {
-	runTool, err := tool.New[submitArgs](failingTool{})
+	runTool, err := NewTool[submitArgs](failingTool{})
 	if err != nil {
 		t.Fatalf("New returned error: %v", err)
 	}
-	engine := New(
+	runtime := NewEngine(
 		&toolCallingClient{},
 		WithTools(runTool),
 		WithMaxModelCalls(1),
 	)
 
-	result, err := engine.Run(context.Background(), RunRequest{Input: "submit"})
+	result, err := runtime.Run(context.Background(), RunRequest{Input: "submit"})
 	if err != nil {
 		t.Fatalf("expected tool failure to stay in result, got error: %v", err)
 	}
@@ -279,16 +278,16 @@ func TestRunReturnsResultWhenToolFails(t *testing.T) {
 }
 
 func TestRunAggregatesUsageAcrossModelCalls(t *testing.T) {
-	runTool, err := tool.New[submitArgs](submitTool{})
+	runTool, err := NewTool[submitArgs](submitTool{})
 	if err != nil {
 		t.Fatalf("New returned error: %v", err)
 	}
-	engine := New(
+	runtime := NewEngine(
 		&usageClient{},
 		WithTools(runTool),
 	)
 
-	result, err := engine.Run(context.Background(), RunRequest{Input: "submit"})
+	result, err := runtime.Run(context.Background(), RunRequest{Input: "submit"})
 	if err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
@@ -304,16 +303,16 @@ func TestRunAggregatesUsageAcrossModelCalls(t *testing.T) {
 }
 
 func TestRunCopiesUsageOntoSessionSnapshot(t *testing.T) {
-	runTool, err := tool.New[submitArgs](submitTool{})
+	runTool, err := NewTool[submitArgs](submitTool{})
 	if err != nil {
 		t.Fatalf("New returned error: %v", err)
 	}
-	engine := New(
+	runtime := NewEngine(
 		&usageClient{},
 		WithTools(runTool),
 	)
 
-	result, err := engine.Run(context.Background(), RunRequest{Input: "submit"})
+	result, err := runtime.Run(context.Background(), RunRequest{Input: "submit"})
 	if err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
@@ -332,9 +331,9 @@ func (errorClient) Generate(ctx context.Context, req provider.ModelRequest) (*pr
 }
 
 func TestRunReturnsExecutionErrorWhenModelCallFails(t *testing.T) {
-	engine := New(errorClient{})
+	runtime := NewEngine(errorClient{})
 
-	result, err := engine.Run(context.Background(), RunRequest{Input: "hello"})
+	result, err := runtime.Run(context.Background(), RunRequest{Input: "hello"})
 	if err == nil {
 		t.Fatalf("expected execution error")
 	}

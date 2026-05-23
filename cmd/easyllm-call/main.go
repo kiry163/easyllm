@@ -11,8 +11,6 @@ import (
 	"strings"
 
 	"github.com/kiry163/easyllm"
-	"github.com/kiry163/easyllm/engine"
-	"github.com/kiry163/easyllm/tool"
 )
 
 const defaultQwenBaseURL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
@@ -46,12 +44,12 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	if err != nil {
 		return err
 	}
-	rt := engine.New(
+	rt := easyllm.NewEngine(
 		client,
-		engine.WithInstructions(cfg.Instructions),
-		engine.WithTools(weatherTool()),
+		easyllm.WithInstructions(cfg.Instructions),
+		easyllm.WithTools(weatherTool()),
 	)
-	result, err := rt.Run(ctx, engine.RunRequest{Input: cfg.Prompt})
+	result, err := rt.Run(ctx, easyllm.RunRequest{Input: cfg.Prompt})
 	if err != nil {
 		return err
 	}
@@ -142,8 +140,8 @@ type weatherArgs struct {
 	City string `tool:"name=city,required,desc=City name"`
 }
 
-func weatherTool() tool.Tool {
-	runTool, err := tool.New[weatherArgs](weatherToolRunner{})
+func weatherTool() easyllm.Tool {
+	runTool, err := easyllm.NewTool[weatherArgs](weatherToolRunner{})
 	if err != nil {
 		panic(err)
 	}
@@ -160,12 +158,12 @@ func (weatherToolRunner) Description() string {
 	return "Get today's weather for a city"
 }
 
-func (weatherToolRunner) Run(ctx context.Context, call tool.CallContext, args weatherArgs) (tool.Result, error) {
+func (weatherToolRunner) Run(ctx context.Context, call easyllm.ToolCallContext, args weatherArgs) (easyllm.ToolResult, error) {
 	city := strings.TrimSpace(args.City)
 	if city == "" {
 		city = "北京"
 	}
-	return tool.Result{
+	return easyllm.ToolResult{
 		Message: city + "今天晴，气温 25C，微风。",
 		Data: map[string]any{
 			"city":        city,
