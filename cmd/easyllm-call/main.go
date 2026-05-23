@@ -12,9 +12,10 @@ import (
 
 	"github.com/kiry163/easyllm"
 	"github.com/kiry163/easyllm/engine"
-	"github.com/kiry163/easyllm/provider/qwen"
 	"github.com/kiry163/easyllm/tool"
 )
+
+const defaultQwenBaseURL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
 type config struct {
 	Transport    string
@@ -63,7 +64,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 func parseConfig(args []string, getenv func(string) string) (config, error) {
 	cfg := config{
 		Transport: "chat",
-		BaseURL:   qwen.DefaultBaseURL,
+		BaseURL:   defaultQwenBaseURL,
 		Prompt:    "请查询今天北京的天气。",
 	}
 	fs := flag.NewFlagSet("easyllm-call", flag.ContinueOnError)
@@ -116,7 +117,7 @@ func parseConfig(args []string, getenv func(string) string) (config, error) {
 
 func buildClient(cfg config) (easyllm.Client, error) {
 	clientConfig := easyllm.Config{
-		Provider:  "qwen",
+		Provider:  easyllm.ProviderQwen,
 		APIKey:    cfg.APIKey,
 		BaseURL:   cfg.BaseURL,
 		Model:     cfg.Model,

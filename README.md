@@ -6,7 +6,7 @@ The default API is centered on one top-level client constructor:
 
 - **`easyllm.NewClient(...)`**: provider choice, credentials, model selection, transport, and common model parameters.
 - **`engine`**: instructions, tools, session state, hooks, and tool-calling loop execution.
-- **Provider packages**: advanced usage when you need direct vendor control.
+- **`provider/openai`**: advanced direct OpenAI client construction when the top-level entrypoint is not enough.
 
 ## Status
 
@@ -16,8 +16,6 @@ Implemented packages:
 
 - `easyllm`: top-level client construction, provider dispatch, and the `Client` interface.
 - `provider/openai`: advanced OpenAI provider constructors.
-- `provider/qwen`: advanced Qwen provider constructors backed by DashScope OpenAI-compatible APIs.
-- `provider/deepseek`: advanced DeepSeek provider constructors backed by DeepSeek OpenAI-compatible APIs.
 - `provider/openai/compat`: reusable OpenAI-compatible protocol base.
 - `engine`: public execution entrypoint, session types, hooks, and tool-calling loop.
 - `tool`: tool definitions, schema generation, typed argument binding, and JSON repair.
@@ -49,7 +47,7 @@ func main() {
 	maxTokens := 512
 
 	client, err := easyllm.NewClient(easyllm.Config{
-		Provider:    "qwen",
+		Provider:    easyllm.ProviderQwen,
 		APIKey:      os.Getenv("DASHSCOPE_API_KEY"),
 		BaseURL:     "https://dashscope.aliyuncs.com/compatible-mode/v1",
 		Model:       "qwen-plus",
@@ -97,7 +95,7 @@ import (
 
 func main() {
 	client, err := easyllm.NewClient(easyllm.Config{
-		Provider: "openai",
+		Provider: easyllm.ProviderOpenAI,
 		APIKey:   os.Getenv("OPENAI_API_KEY"),
 		BaseURL:  "https://api.openai.com/v1",
 		Model:    "gpt-4.1-mini",
@@ -135,7 +133,7 @@ import (
 
 func main() {
 	client, err := easyllm.NewClient(easyllm.Config{
-		Provider: "deepseek",
+		Provider: easyllm.ProviderDeepSeek,
 		APIKey:   os.Getenv("DEEPSEEK_API_KEY"),
 		Model:    "deepseek-v4-flash",
 	})
@@ -231,7 +229,7 @@ Important boundaries:
 
 - `engine.Engine.Run` is one engine execution. It may contain multiple model API calls if tools are used.
 - `easyllm.Client.Generate` is one model call from the runtime perspective. It may retry HTTP requests internally.
-- Provider packages create configured model clients. They do not store session state.
+- Provider implementations create configured model clients. They do not store session state.
 - `engine.Session` is in-memory only and is not persisted by the library.
 
 ## Result Semantics
@@ -260,22 +258,23 @@ type Usage struct {
 
 ## Advanced Provider Usage
 
-Providers are created with vendor connection settings:
+Most applications should use `easyllm.NewClient(...)`. Built-in OpenAI-compatible vendors such as Qwen and DeepSeek are selected through `easyllm.Config.Provider`, not through public vendor packages.
+
+The lower-level `provider/openai` package is available when you need direct OpenAI client construction:
 
 ```go
-p := qwen.NewProvider(
-	qwen.WithAPIKey(os.Getenv("DASHSCOPE_API_KEY")),
-	qwen.WithBaseURL(qwen.DefaultBaseURL),
-	qwen.WithTimeout(30 * time.Second),
-	qwen.WithRetry(qwen.RetryConfig{MaxAttempts: 2}),
+p := openai.NewProvider(
+	openai.WithAPIKey(os.Getenv("OPENAI_API_KEY")),
+	openai.WithTimeout(30 * time.Second),
+	openai.WithRetry(openai.RetryConfig{MaxAttempts: 2}),
 )
 ```
 
 Model clients are created from providers with model-level configuration:
 
 ```go
-client := p.ChatClient(qwen.ChatClientConfig{
-	Model: "qwen-plus",
+client := p.ChatClient(openai.ChatClientConfig{
+	Model: "gpt-4.1-mini",
 })
 ```
 

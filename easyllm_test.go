@@ -6,7 +6,7 @@ import (
 
 func TestNewClientBuildsOpenAIClient(t *testing.T) {
 	client, err := NewClient(Config{
-		Provider: "openai",
+		Provider: ProviderOpenAI,
 		APIKey:   "token",
 		Model:    "gpt-4.1-mini",
 	})
@@ -23,7 +23,7 @@ func TestNewClientBuildsOpenAIClient(t *testing.T) {
 
 func TestNewClientBuildsQwenClientWithThinkingOption(t *testing.T) {
 	client, err := NewClient(Config{
-		Provider: "qwen",
+		Provider: ProviderQwen,
 		APIKey:   "token",
 		Model:    "qwen-plus",
 		Options: map[string]any{
@@ -40,7 +40,7 @@ func TestNewClientBuildsQwenClientWithThinkingOption(t *testing.T) {
 
 func TestNewClientBuildsDeepSeekClient(t *testing.T) {
 	client, err := NewClient(Config{
-		Provider: "deepseek",
+		Provider: ProviderDeepSeek,
 		APIKey:   "token",
 		Model:    "deepseek-v4-flash",
 	})
@@ -54,7 +54,7 @@ func TestNewClientBuildsDeepSeekClient(t *testing.T) {
 
 func TestNewClientBuildsResponsesClientWhenRequested(t *testing.T) {
 	client, err := NewClient(Config{
-		Provider:  "openai",
+		Provider:  ProviderOpenAI,
 		APIKey:    "token",
 		Model:     "gpt-4.1-mini",
 		Transport: "responses",
@@ -80,7 +80,7 @@ func TestNewClientRejectsUnsupportedProvider(t *testing.T) {
 
 func TestNewClientRejectsUnsupportedTransport(t *testing.T) {
 	_, err := NewClient(Config{
-		Provider:  "openai",
+		Provider:  ProviderOpenAI,
 		APIKey:    "token",
 		Model:     "gpt-4.1-mini",
 		Transport: "stream",
@@ -92,7 +92,7 @@ func TestNewClientRejectsUnsupportedTransport(t *testing.T) {
 
 func TestNewClientRejectsMissingAPIKey(t *testing.T) {
 	_, err := NewClient(Config{
-		Provider: "openai",
+		Provider: ProviderOpenAI,
 		Model:    "gpt-4.1-mini",
 	})
 	if err == nil {
@@ -102,7 +102,7 @@ func TestNewClientRejectsMissingAPIKey(t *testing.T) {
 
 func TestNewClientRejectsMissingModel(t *testing.T) {
 	_, err := NewClient(Config{
-		Provider: "openai",
+		Provider: ProviderOpenAI,
 		APIKey:   "token",
 	})
 	if err == nil {
@@ -112,7 +112,7 @@ func TestNewClientRejectsMissingModel(t *testing.T) {
 
 func TestNewClientRejectsUnknownQwenOption(t *testing.T) {
 	_, err := NewClient(Config{
-		Provider: "qwen",
+		Provider: ProviderQwen,
 		APIKey:   "token",
 		Model:    "qwen-plus",
 		Options: map[string]any{
@@ -126,7 +126,7 @@ func TestNewClientRejectsUnknownQwenOption(t *testing.T) {
 
 func TestNewClientRejectsWrongOptionType(t *testing.T) {
 	_, err := NewClient(Config{
-		Provider: "qwen",
+		Provider: ProviderQwen,
 		APIKey:   "token",
 		Model:    "qwen-plus",
 		Options: map[string]any{

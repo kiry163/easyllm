@@ -287,7 +287,7 @@ func Example_schemaTags() {
 
 func Example_newClient() {
 	client, err := easyllm.NewClient(easyllm.Config{
-		Provider: "qwen",
+		Provider: easyllm.ProviderQwen,
 		APIKey:   "example-key",
 		BaseURL:  "https://dashscope.aliyuncs.com/compatible-mode/v1",
 		Model:    "qwen-plus",

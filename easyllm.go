@@ -6,13 +6,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kiry163/easyllm/internal/provider/deepseek"
+	"github.com/kiry163/easyllm/internal/provider/qwen"
 	"github.com/kiry163/easyllm/provider"
-	"github.com/kiry163/easyllm/provider/deepseek"
 	"github.com/kiry163/easyllm/provider/openai"
-	"github.com/kiry163/easyllm/provider/qwen"
 )
 
 const (
+	ProviderOpenAI   = "openai"
+	ProviderQwen     = "qwen"
+	ProviderDeepSeek = "deepseek"
+
 	TransportChat      = "chat"
 	TransportResponses = "responses"
 )
@@ -55,11 +59,11 @@ func NewClient(config Config) (Client, error) {
 	}
 
 	switch config.Provider {
-	case "openai":
+	case ProviderOpenAI:
 		return newOpenAIClient(config), nil
-	case "qwen":
+	case ProviderQwen:
 		return newQwenClient(config)
-	case "deepseek":
+	case ProviderDeepSeek:
 		return newDeepSeekClient(config)
 	default:
 		return nil, fmt.Errorf("unsupported provider %q", config.Provider)
