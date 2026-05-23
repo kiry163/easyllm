@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -207,6 +208,115 @@ func TestNewClientAppliesRetryBackoffConfig(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed < 30*time.Millisecond {
 		t.Fatalf("expected retry backoff to be applied, elapsed=%v", elapsed)
+	}
+}
+
+func TestNewClientOpenAICompatibleGenerateStreamChat(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		defer r.Body.Close()
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if body["stream"] != true {
+			t.Fatalf("expected stream=true, got %#v", body["stream"])
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(strings.Join([]string{
+			`data: {"id":"chatcmpl_123","choices":[{"delta":{"content":"hel"},"finish_reason":""}]}`,
+			``,
+			`data: {"choices":[{"delta":{"content":"lo"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}`,
+			``,
+			`data: [DONE]`,
+			``,
+		}, "\n")))
+	}))
+	defer server.Close()
+
+	client, err := NewClient(Config{
+		Provider: ProviderOpenAICompatible,
+		BaseURL:  server.URL,
+		Model:    "custom-model",
+	})
+	if err != nil {
+		t.Fatalf("NewClient returned error: %v", err)
+	}
+
+	var text strings.Builder
+	var done *ModelResponse
+	err = client.GenerateStream(context.Background(), ModelRequest{
+		Input: []InputItem{UserMessageItem{Content: []TextPart{{Text: "hello"}}}},
+	}, func(event StreamEvent) error {
+		switch event.Type {
+		case StreamEventMessageDelta:
+			text.WriteString(event.Text)
+		case StreamEventDone:
+			if current, ok := event.Raw.(*ModelResponse); ok {
+				done = current
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("GenerateStream returned error: %v", err)
+	}
+	if text.String() != "hello" {
+		t.Fatalf("unexpected streamed text: %q", text.String())
+	}
+	if done == nil || done.Usage.TotalTokens != 5 || done.Provider != ProviderOpenAICompatible {
+		t.Fatalf("unexpected done response: %+v", done)
+	}
+}
+
+func TestNewClientOpenAICompatibleGenerateStreamResponses(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/responses" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(strings.Join([]string{
+			`data: {"type":"response.output_text.delta","delta":"done"}`,
+			``,
+			`data: {"type":"response.completed","response":{"id":"resp_123","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}],"usage":{"input_tokens":4,"output_tokens":1,"total_tokens":5}}}`,
+			``,
+		}, "\n")))
+	}))
+	defer server.Close()
+
+	client, err := NewClient(Config{
+		Provider:  ProviderOpenAICompatible,
+		BaseURL:   server.URL,
+		Model:     "custom-model",
+		Transport: TransportResponses,
+	})
+	if err != nil {
+		t.Fatalf("NewClient returned error: %v", err)
+	}
+
+	var gotText string
+	var done *ModelResponse
+	err = client.GenerateStream(context.Background(), ModelRequest{
+		Input: []InputItem{UserMessageItem{Content: []TextPart{{Text: "hello"}}}},
+	}, func(event StreamEvent) error {
+		switch event.Type {
+		case StreamEventMessageDelta:
+			gotText += event.Text
+		case StreamEventDone:
+			done, _ = event.Raw.(*ModelResponse)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("GenerateStream returned error: %v", err)
+	}
+	if gotText != "done" {
+		t.Fatalf("unexpected streamed text: %q", gotText)
+	}
+	if done == nil || done.ResponseID != "resp_123" || done.Usage.TotalTokens != 5 {
+		t.Fatalf("unexpected done response: %+v", done)
 	}
 }
 

@@ -103,6 +103,10 @@ func (c *Client) Generate(ctx context.Context, req ModelRequest) (*ModelResponse
 	return c.inner.Generate(ctx, req)
 }
 
+func (c *Client) GenerateStream(ctx context.Context, req ModelRequest, handler model.StreamHandler) error {
+	return c.inner.GenerateStream(ctx, req, handler)
+}
+
 func (p *Provider) modelOptions(config ChatClientConfig) []compat.Option {
 	opts := []compat.Option{compat.WithProviderName("openai"), compat.WithDefaultModel(config.Model)}
 	opts = append(opts, p.options...)

@@ -26,6 +26,26 @@ func (fakeClient) Generate(ctx context.Context, req model.ModelRequest) (*model.
 	}, nil
 }
 
+func (fakeClient) GenerateStream(ctx context.Context, req model.ModelRequest, handler model.StreamHandler) error {
+	resp, err := fakeClient{}.Generate(ctx, req)
+	if err != nil {
+		return err
+	}
+	if handler != nil {
+		if len(resp.Output) > 0 {
+			if msg, ok := resp.Output[0].(model.MessageOutput); ok && len(msg.Content) > 0 {
+				if err := handler(model.StreamEvent{Type: model.StreamEventMessageDelta, Text: msg.Content[0].Text}); err != nil {
+					return err
+				}
+			}
+		}
+		if err := handler(model.StreamEvent{Type: model.StreamEventDone, Raw: resp}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func TestNewRunAppendsInputAndReturnsOutput(t *testing.T) {
 	runtime := NewEngine(
 		fakeClient{},
@@ -68,6 +88,26 @@ func (c *toolCallingClient) Generate(ctx context.Context, req model.ModelRequest
 		},
 		FinishReason: "stop",
 	}, nil
+}
+
+func (c *toolCallingClient) GenerateStream(ctx context.Context, req model.ModelRequest, handler model.StreamHandler) error {
+	resp, err := c.Generate(ctx, req)
+	if err != nil {
+		return err
+	}
+	if handler != nil {
+		if len(resp.Output) > 0 {
+			if msg, ok := resp.Output[0].(model.MessageOutput); ok && len(msg.Content) > 0 {
+				if err := handler(model.StreamEvent{Type: model.StreamEventMessageDelta, Text: msg.Content[0].Text}); err != nil {
+					return err
+				}
+			}
+		}
+		if err := handler(model.StreamEvent{Type: model.StreamEventDone, Raw: resp}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type submitArgs struct {
@@ -239,6 +279,26 @@ func (c *usageClient) Generate(ctx context.Context, req model.ModelRequest) (*mo
 	}, nil
 }
 
+func (c *usageClient) GenerateStream(ctx context.Context, req model.ModelRequest, handler model.StreamHandler) error {
+	resp, err := c.Generate(ctx, req)
+	if err != nil {
+		return err
+	}
+	if handler != nil {
+		if len(resp.Output) > 0 {
+			if msg, ok := resp.Output[0].(model.MessageOutput); ok && len(msg.Content) > 0 {
+				if err := handler(model.StreamEvent{Type: model.StreamEventMessageDelta, Text: msg.Content[0].Text}); err != nil {
+					return err
+				}
+			}
+		}
+		if err := handler(model.StreamEvent{Type: model.StreamEventDone, Raw: resp}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type failingTool struct{}
 
 func (failingTool) Name() string {
@@ -387,6 +447,10 @@ func (errorClient) Generate(ctx context.Context, req model.ModelRequest) (*model
 	return nil, errors.New("model unavailable")
 }
 
+func (errorClient) GenerateStream(ctx context.Context, req model.ModelRequest, handler model.StreamHandler) error {
+	return errors.New("model unavailable")
+}
+
 func TestRunReturnsExecutionErrorWhenModelCallFails(t *testing.T) {
 	runtime := NewEngine(errorClient{})
 
@@ -396,5 +460,59 @@ func TestRunReturnsExecutionErrorWhenModelCallFails(t *testing.T) {
 	}
 	if result != nil {
 		t.Fatalf("expected nil result on execution error, got %+v", result)
+	}
+}
+
+func TestRunStreamEmitsToolLifecycleAndReturnsResult(t *testing.T) {
+	runTool, err := NewTool[submitArgs](submitTool{})
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+	client := &toolCallingClient{}
+	runtime := NewEngine(client, WithTools(runTool))
+
+	var events []StreamEvent
+	result, err := runtime.RunStream(context.Background(), RunRequest{Input: "submit"}, func(event StreamEvent) error {
+		events = append(events, event)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("RunStream returned error: %v", err)
+	}
+	if result.OutputText != "done" {
+		t.Fatalf("unexpected output text: %q", result.OutputText)
+	}
+	if len(events) != 4 {
+		t.Fatalf("unexpected event count: %d", len(events))
+	}
+	if events[0].Type != StreamEventToolStart || events[0].ToolName != "submit" {
+		t.Fatalf("unexpected first event: %+v", events[0])
+	}
+	if events[1].Type != StreamEventToolFinish || events[1].ToolName != "submit" {
+		t.Fatalf("unexpected second event: %+v", events[1])
+	}
+	if events[2].Type != StreamEventMessageDelta || events[2].Text != "done" {
+		t.Fatalf("unexpected third event: %+v", events[2])
+	}
+	if events[3].Type != StreamEventDone {
+		t.Fatalf("unexpected final event: %+v", events[3])
+	}
+}
+
+func TestRunStreamStopsWhenHandlerReturnsError(t *testing.T) {
+	runtime := NewEngine(fakeClient{})
+	wantErr := errors.New("stop streaming")
+
+	result, err := runtime.RunStream(context.Background(), RunRequest{Input: "hello"}, func(event StreamEvent) error {
+		if event.Type == StreamEventMessageDelta {
+			return wantErr
+		}
+		return nil
+	})
+	if err == nil || !errors.Is(err, wantErr) {
+		t.Fatalf("expected handler error, got result=%+v err=%v", result, err)
+	}
+	if result != nil {
+		t.Fatalf("expected nil result when handler fails, got %+v", result)
 	}
 }

@@ -137,6 +137,58 @@ easyllm.Engine.Run
   -> easyllm.Client.Generate
 ```
 
+## Streaming
+
+Use `GenerateStream(...)` for a single streaming model call and `RunStream(...)` when you want the engine to keep handling sessions and tool calls.
+
+```go
+err = client.GenerateStream(ctx, easyllm.ModelRequest{
+	Input: []easyllm.InputItem{
+		easyllm.UserMessageItem{
+			Content: []easyllm.TextPart{{Text: "Say hello."}},
+		},
+	},
+}, func(event easyllm.StreamEvent) error {
+	switch event.Type {
+	case easyllm.StreamEventMessageDelta:
+		fmt.Print(event.Text)
+	case easyllm.StreamEventDone:
+		fmt.Println()
+	}
+	return nil
+})
+if err != nil {
+	panic(err)
+}
+```
+
+`RunStream(...)` adds tool lifecycle events on top of text deltas:
+
+```go
+result, err := engine.RunStream(ctx, easyllm.RunRequest{
+	Input: "Check the weather in Hangzhou.",
+}, func(event easyllm.StreamEvent) error {
+	switch event.Type {
+	case easyllm.StreamEventMessageDelta:
+		fmt.Print(event.Text)
+	case easyllm.StreamEventToolStart:
+		fmt.Printf("\n[tool start] %s\n", event.ToolName)
+	case easyllm.StreamEventToolFinish:
+		fmt.Printf("[tool finish] %s\n", event.ToolName)
+	case easyllm.StreamEventDone:
+		fmt.Println("\n[done]")
+	}
+	return nil
+})
+if err != nil {
+	panic(err)
+}
+
+fmt.Println(result.StopReason)
+```
+
+Streaming support currently targets `ProviderOpenAICompatible` in phase one.
+
 ## Tool Calling
 
 Tools are strongly typed with Go structs. Field names default to `json` tags when present, then snake_case Go field names. Use the `tool` tag for descriptions, required fields, enums, and validation constraints.
@@ -274,6 +326,22 @@ func (CustomClient) Generate(ctx context.Context, req easyllm.ModelRequest) (*ea
 		},
 		FinishReason: "stop",
 	}, nil
+}
+
+func (c CustomClient) GenerateStream(ctx context.Context, req easyllm.ModelRequest, handler easyllm.StreamHandler) error {
+	resp, err := c.Generate(ctx, req)
+	if err != nil {
+		return err
+	}
+	if handler != nil {
+		if err := handler(easyllm.StreamEvent{Type: easyllm.StreamEventMessageDelta, Text: "done"}); err != nil {
+			return err
+		}
+		if err := handler(easyllm.StreamEvent{Type: easyllm.StreamEventDone, Raw: resp}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 engine := easyllm.NewEngine(CustomClient{})

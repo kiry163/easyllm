@@ -165,6 +165,19 @@ func (c *Client) Generate(ctx context.Context, req model.ModelRequest) (*model.M
 	}
 }
 
+func (c *Client) GenerateStream(ctx context.Context, req model.ModelRequest, handler model.StreamHandler) error {
+	resp, err := c.generateStream(ctx, req, handler)
+	if err != nil {
+		return err
+	}
+	if handler != nil {
+		if err := handler(model.StreamEvent{Type: model.StreamEventDone, Raw: resp}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (c *Client) generateChat(ctx context.Context, req model.ModelRequest) (*model.ModelResponse, error) {
 	body := map[string]any{
 		"model":    c.resolveModel(req.Model),

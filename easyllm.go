@@ -25,6 +25,7 @@ const (
 
 type Client interface {
 	Generate(context.Context, ModelRequest) (*ModelResponse, error)
+	GenerateStream(context.Context, ModelRequest, StreamHandler) error
 }
 
 type ModelRequest = model.ModelRequest
@@ -40,6 +41,16 @@ type ToolCallItem = model.ToolCallItem
 type ToolResultItem = model.ToolResultItem
 type MessageOutput = model.MessageOutput
 type ToolCallOutput = model.ToolCallOutput
+type StreamEventType = model.StreamEventType
+type StreamEvent = model.StreamEvent
+type StreamHandler = model.StreamHandler
+
+const (
+	StreamEventMessageDelta = model.StreamEventMessageDelta
+	StreamEventToolStart    = model.StreamEventToolStart
+	StreamEventToolFinish   = model.StreamEventToolFinish
+	StreamEventDone         = model.StreamEventDone
+)
 
 type Config struct {
 	Provider    string

@@ -21,6 +21,26 @@ func (echoClient) Generate(ctx context.Context, req easyllm.ModelRequest) (*easy
 	return messageResponse("echo: " + lastUserText), nil
 }
 
+func (c echoClient) GenerateStream(ctx context.Context, req easyllm.ModelRequest, handler easyllm.StreamHandler) error {
+	resp, err := c.Generate(ctx, req)
+	if err != nil {
+		return err
+	}
+	if handler != nil {
+		if len(resp.Output) > 0 {
+			if msg, ok := resp.Output[0].(easyllm.MessageOutput); ok && len(msg.Content) > 0 {
+				if err := handler(easyllm.StreamEvent{Type: easyllm.StreamEventMessageDelta, Text: msg.Content[0].Text}); err != nil {
+					return err
+				}
+			}
+		}
+		if err := handler(easyllm.StreamEvent{Type: easyllm.StreamEventDone, Raw: resp}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func Example_basicRun() {
 	rt := easyllm.NewEngine(
 		echoClient{},
@@ -69,6 +89,32 @@ func Example_sessionContinuation() {
 	// 4
 }
 
+func Example_generateStream() {
+	client := echoClient{}
+	var b strings.Builder
+
+	err := client.GenerateStream(context.Background(), easyllm.ModelRequest{
+		Input: []easyllm.InputItem{
+			easyllm.UserMessageItem{
+				Content: []easyllm.TextPart{{Text: "hello"}},
+			},
+		},
+	}, func(event easyllm.StreamEvent) error {
+		if event.Type == easyllm.StreamEventMessageDelta {
+			b.WriteString(event.Text)
+		}
+		return nil
+	})
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println(b.String())
+
+	// Output:
+	// echo: hello
+}
+
 type toolCallingClient struct{}
 
 func (toolCallingClient) Generate(ctx context.Context, req easyllm.ModelRequest) (*easyllm.ModelResponse, error) {
@@ -87,6 +133,26 @@ func (toolCallingClient) Generate(ctx context.Context, req easyllm.ModelRequest)
 		},
 		FinishReason: "tool_calls",
 	}, nil
+}
+
+func (c toolCallingClient) GenerateStream(ctx context.Context, req easyllm.ModelRequest, handler easyllm.StreamHandler) error {
+	resp, err := c.Generate(ctx, req)
+	if err != nil {
+		return err
+	}
+	if handler != nil {
+		if len(resp.Output) > 0 {
+			if msg, ok := resp.Output[0].(easyllm.MessageOutput); ok && len(msg.Content) > 0 {
+				if err := handler(easyllm.StreamEvent{Type: easyllm.StreamEventMessageDelta, Text: msg.Content[0].Text}); err != nil {
+					return err
+				}
+			}
+		}
+		if err := handler(easyllm.StreamEvent{Type: easyllm.StreamEventDone, Raw: resp}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func Example_toolCalling() {
@@ -114,6 +180,47 @@ func Example_toolCalling() {
 	// stop
 }
 
+func Example_runStream() {
+	submitTool, err := easyllm.NewTool[submitArgs](submitTool{service: "svc"})
+	if err != nil {
+		panic(err)
+	}
+
+	rt := easyllm.NewEngine(
+		toolCallingClient{},
+		easyllm.WithTools(submitTool),
+	)
+	var lines []string
+	result, err := rt.RunStream(context.Background(), easyllm.RunRequest{
+		Input: "submit ok",
+	}, func(event easyllm.StreamEvent) error {
+		switch event.Type {
+		case easyllm.StreamEventToolStart:
+			lines = append(lines, "tool_start:"+event.ToolName)
+		case easyllm.StreamEventToolFinish:
+			lines = append(lines, "tool_finish:"+event.ToolName)
+		case easyllm.StreamEventMessageDelta:
+			lines = append(lines, "delta:"+event.Text)
+		case easyllm.StreamEventDone:
+			lines = append(lines, "done")
+		}
+		return nil
+	})
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println(strings.Join(lines, "\n"))
+	fmt.Println(result.OutputText)
+
+	// Output:
+	// tool_start:submit
+	// tool_finish:submit
+	// delta:tool result received
+	// done
+	// tool result received
+}
+
 type profileExtractionClient struct{}
 
 func (profileExtractionClient) Generate(ctx context.Context, req easyllm.ModelRequest) (*easyllm.ModelResponse, error) {
@@ -137,6 +244,26 @@ func (profileExtractionClient) Generate(ctx context.Context, req easyllm.ModelRe
 		},
 		FinishReason: "tool_calls",
 	}, nil
+}
+
+func (c profileExtractionClient) GenerateStream(ctx context.Context, req easyllm.ModelRequest, handler easyllm.StreamHandler) error {
+	resp, err := c.Generate(ctx, req)
+	if err != nil {
+		return err
+	}
+	if handler != nil {
+		if len(resp.Output) > 0 {
+			if msg, ok := resp.Output[0].(easyllm.MessageOutput); ok && len(msg.Content) > 0 {
+				if err := handler(easyllm.StreamEvent{Type: easyllm.StreamEventMessageDelta, Text: msg.Content[0].Text}); err != nil {
+					return err
+				}
+			}
+		}
+		if err := handler(easyllm.StreamEvent{Type: easyllm.StreamEventDone, Raw: resp}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type studentProfile struct {

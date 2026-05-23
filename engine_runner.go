@@ -224,6 +224,253 @@ func run(ctx context.Context, client Client, session *Session, metadata map[stri
 	return retResult, nil
 }
 
+func runStream(ctx context.Context, client Client, session *Session, metadata map[string]any, handler StreamHandler, cfg runConfig) (retResult *RunResult, retErr error) {
+	if session == nil {
+		return nil, fmt.Errorf("session is required")
+	}
+	if client == nil {
+		return nil, fmt.Errorf("client is required")
+	}
+	if cfg.maxModelCalls <= 0 {
+		cfg.maxModelCalls = 3
+	}
+	if cfg.hooks.OnRunStart != nil {
+		if err := cfg.hooks.OnRunStart(RunStartEvent{Session: session.Snapshot(), Metadata: cloneMap(metadata)}); err != nil {
+			return nil, err
+		}
+	}
+
+	result := &RunResult{}
+	defer func() {
+		if cfg.hooks.OnRunFinish != nil {
+			finishErr := cfg.hooks.OnRunFinish(RunFinishEvent{
+				Session:  session.Snapshot(),
+				Result:   result,
+				Err:      retErr,
+				Metadata: cloneMap(metadata),
+			})
+			if finishErr != nil && retErr == nil {
+				retErr = finishErr
+			}
+		}
+	}()
+
+	toolMap := make(map[string]Tool, len(cfg.tools))
+	for _, current := range cfg.tools {
+		if current == nil {
+			continue
+		}
+		toolMap[current.Definition().Name] = current
+	}
+
+	for iteration := 1; iteration <= cfg.maxModelCalls; iteration++ {
+		modelReq := ModelRequest{
+			Input:    session.ItemsView(),
+			Tools:    definitionsFromTools(cfg.tools),
+			Metadata: cloneMap(metadata),
+		}
+		if cfg.hooks.OnModelRequest != nil {
+			if err := cfg.hooks.OnModelRequest(ModelRequestEvent{
+				Session:  session.Snapshot(),
+				Request:  modelReq,
+				Metadata: cloneMap(metadata),
+			}); err != nil {
+				retErr = err
+				return nil, retErr
+			}
+		}
+
+		var resp *ModelResponse
+		err := client.GenerateStream(ctx, modelReq, func(event StreamEvent) error {
+			switch event.Type {
+			case StreamEventDone:
+				if event.Raw == nil {
+					return nil
+				}
+				captured, ok := event.Raw.(*ModelResponse)
+				if !ok {
+					return fmt.Errorf("stream done event missing model response")
+				}
+				resp = captured
+				return nil
+			case StreamEventMessageDelta:
+				if handler != nil {
+					return handler(event)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			retErr = err
+			return nil, retErr
+		}
+		if resp == nil {
+			retErr = fmt.Errorf("stream completed without model response")
+			return nil, retErr
+		}
+
+		result.ModelCallCount++
+		session.Iteration = iteration
+		session.LastResponse = resp
+		addUsage(&session.Usage, resp.Usage)
+		addUsage(&result.Usage, resp.Usage)
+		session.AppendItems(outputItemsToInputItems(resp.Output)...)
+
+		if cfg.hooks.OnModelResponse != nil {
+			if err := cfg.hooks.OnModelResponse(ModelResponseEvent{
+				Session:  session.Snapshot(),
+				Response: *resp,
+				Metadata: cloneMap(metadata),
+			}); err != nil {
+				retErr = err
+				return nil, retErr
+			}
+		}
+
+		hasToolCalls := false
+		for _, item := range resp.Output {
+			switch out := item.(type) {
+			case model.MessageOutput:
+				if len(out.Content) > 0 {
+					result.OutputText = out.Content[len(out.Content)-1].Text
+				}
+			case model.ToolCallOutput:
+				hasToolCalls = true
+				result.ToolCallCount++
+				if cfg.hooks.OnToolCallStart != nil {
+					if err := cfg.hooks.OnToolCallStart(ToolCallStartEvent{
+						Session:  session.Snapshot(),
+						Call:     out,
+						Metadata: cloneMap(metadata),
+					}); err != nil {
+						retErr = err
+						return nil, retErr
+					}
+				}
+				if handler != nil {
+					if err := handler(StreamEvent{Type: StreamEventToolStart, ToolName: out.Name}); err != nil {
+						retErr = err
+						return nil, retErr
+					}
+				}
+				runTool := toolMap[out.Name]
+				if runTool == nil {
+					toolErr := NewPayloadError("tool not found", map[string]any{
+						"status":  "error",
+						"code":    "tool_not_found",
+						"tool":    out.Name,
+						"message": fmt.Sprintf("tool %q not found", out.Name),
+					})
+					session.AppendItems(model.ToolResultItem{
+						CallID:  out.CallID,
+						Name:    out.Name,
+						Content: encodeToolError(out.Name, toolErr),
+					})
+					if cfg.hooks.OnToolCallFinish != nil {
+						if err := cfg.hooks.OnToolCallFinish(ToolCallFinishEvent{
+							Session:  session.Snapshot(),
+							Call:     out,
+							Err:      toolErr,
+							Metadata: cloneMap(metadata),
+						}); err != nil {
+							retErr = err
+							return nil, retErr
+						}
+					}
+					if handler != nil {
+						if err := handler(StreamEvent{Type: StreamEventToolFinish, ToolName: out.Name}); err != nil {
+							retErr = err
+							return nil, retErr
+						}
+					}
+					continue
+				}
+				outcome, invokeErr := runTool.Invoke(ctx, ToolCallContext{
+					CallID:    out.CallID,
+					Name:      out.Name,
+					Iteration: iteration,
+					Metadata:  cloneMap(metadata),
+				}, out.Arguments)
+				result.ToolResults = append(result.ToolResults, ToolCallResult{
+					Call:   out,
+					Result: outcome,
+					Err:    invokeErr,
+				})
+				message := ""
+				if invokeErr != nil {
+					message = encodeToolError(out.Name, invokeErr)
+				} else {
+					message = encodeToolSuccess(out.Name, outcome)
+				}
+				session.AppendItems(model.ToolResultItem{
+					CallID:  out.CallID,
+					Name:    out.Name,
+					Content: message,
+				})
+				if cfg.hooks.OnToolCallFinish != nil {
+					event := ToolCallFinishEvent{
+						Session:  session.Snapshot(),
+						Call:     out,
+						Metadata: cloneMap(metadata),
+					}
+					if invokeErr != nil {
+						event.Err = invokeErr
+					} else {
+						copyOutcome := outcome
+						event.Result = &copyOutcome
+					}
+					if err := cfg.hooks.OnToolCallFinish(event); err != nil {
+						retErr = err
+						return nil, retErr
+					}
+				}
+				if handler != nil {
+					if err := handler(StreamEvent{Type: StreamEventToolFinish, ToolName: out.Name}); err != nil {
+						retErr = err
+						return nil, retErr
+					}
+				}
+				if invokeErr == nil && cfg.stopAfterToolCall {
+					result.StopReason = StopReasonStopOnToolResult
+					result.Session = session.Snapshot()
+					if handler != nil {
+						if err := handler(StreamEvent{Type: StreamEventDone}); err != nil {
+							retErr = err
+							return nil, retErr
+						}
+					}
+					retResult = result
+					return retResult, nil
+				}
+			}
+		}
+
+		if !hasToolCalls {
+			result.StopReason = StopReasonStop
+			result.Session = session.Snapshot()
+			if handler != nil {
+				if err := handler(StreamEvent{Type: StreamEventDone}); err != nil {
+					retErr = err
+					return nil, retErr
+				}
+			}
+			retResult = result
+			return retResult, nil
+		}
+	}
+
+	result.StopReason = StopReasonModelCallLimitExceeded
+	result.Session = session.Snapshot()
+	if handler != nil {
+		if err := handler(StreamEvent{Type: StreamEventDone}); err != nil {
+			retErr = err
+			return nil, retErr
+		}
+	}
+	retResult = result
+	return retResult, nil
+}
+
 func outputItemsToInputItems(items []model.OutputItem) []model.InputItem {
 	if len(items) == 0 {
 		return nil
