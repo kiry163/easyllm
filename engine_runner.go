@@ -23,19 +23,19 @@ const (
 )
 
 type RunResult struct {
-	Session        SessionSnapshot
-	OutputText     string
-	ModelCallCount int
-	ToolCallCount  int
-	ToolResults    []ToolCallResult
-	StopReason     StopReason
-	Usage          model.Usage
+	Session        SessionSnapshot  `json:"session"`
+	OutputText     string           `json:"output_text"`
+	ModelCallCount int              `json:"model_call_count"`
+	ToolCallCount  int              `json:"tool_call_count"`
+	ToolResults    []ToolCallResult `json:"tool_results"`
+	StopReason     StopReason       `json:"stop_reason"`
+	Usage          model.Usage      `json:"usage"`
 }
 
 type ToolCallResult struct {
-	Call   model.ToolCallOutput
-	Result ToolResult
-	Err    error
+	Call   model.ToolCallOutput `json:"call"`
+	Result ToolResult           `json:"result"`
+	Err    error                `json:"err"`
 }
 
 func run(ctx context.Context, client Client, session *Session, metadata map[string]any, cfg runConfig) (retResult *RunResult, retErr error) {

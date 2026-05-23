@@ -55,6 +55,8 @@ type Config struct {
 	EnableThinking *bool
 	Timeout        time.Duration
 	MaxAttempts    int
+	InitialBackoff time.Duration
+	MaxBackoff     time.Duration
 	// ExtraBody is merged into the final model request body after normalized
 	// fields, so it can override provider-specific request parameters.
 	ExtraBody map[string]any
@@ -115,7 +117,9 @@ func newOpenAIClient(config Config) Client {
 	}
 	if config.MaxAttempts > 0 {
 		opts = append(opts, openai.WithRetry(openai.RetryConfig{
-			MaxAttempts: config.MaxAttempts,
+			MaxAttempts:    config.MaxAttempts,
+			InitialBackoff: config.InitialBackoff,
+			MaxBackoff:     config.MaxBackoff,
 		}))
 	}
 	p := openai.NewProvider(opts...)
@@ -142,7 +146,9 @@ func newOpenAICompatibleClient(config Config) Client {
 	}
 	if config.MaxAttempts > 0 {
 		opts = append(opts, compat.WithRetry(compat.RetryConfig{
-			MaxAttempts: config.MaxAttempts,
+			MaxAttempts:    config.MaxAttempts,
+			InitialBackoff: config.InitialBackoff,
+			MaxBackoff:     config.MaxBackoff,
 		}))
 	}
 	if config.Temperature != nil {
@@ -178,7 +184,9 @@ func newQwenClient(config Config) (Client, error) {
 	}
 	if config.MaxAttempts > 0 {
 		opts = append(opts, qwen.WithRetry(qwen.RetryConfig{
-			MaxAttempts: config.MaxAttempts,
+			MaxAttempts:    config.MaxAttempts,
+			InitialBackoff: config.InitialBackoff,
+			MaxBackoff:     config.MaxBackoff,
 		}))
 	}
 	p := qwen.NewProvider(opts...)
@@ -212,7 +220,9 @@ func newDeepSeekClient(config Config) (Client, error) {
 	}
 	if config.MaxAttempts > 0 {
 		opts = append(opts, deepseek.WithRetry(deepseek.RetryConfig{
-			MaxAttempts: config.MaxAttempts,
+			MaxAttempts:    config.MaxAttempts,
+			InitialBackoff: config.InitialBackoff,
+			MaxBackoff:     config.MaxBackoff,
 		}))
 	}
 	p := deepseek.NewProvider(opts...)

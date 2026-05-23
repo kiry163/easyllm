@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestNewClientBuildsOpenAIClient(t *testing.T) {
@@ -159,6 +160,53 @@ func TestNewClientOpenAICompatibleUsesConfiguredEndpointAndExtraBody(t *testing.
 	}
 	if resp.Provider != ProviderOpenAICompatible {
 		t.Fatalf("unexpected provider: %q", resp.Provider)
+	}
+}
+
+func TestNewClientAppliesRetryBackoffConfig(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			http.Error(w, `{"error":"retry"}`, http.StatusTooManyRequests)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{
+					"message":       map[string]any{"content": "done"},
+					"finish_reason": "stop",
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	start := time.Now()
+	client, err := NewClient(Config{
+		Provider:       ProviderOpenAICompatible,
+		BaseURL:        server.URL,
+		Model:          "custom-model",
+		MaxAttempts:    2,
+		InitialBackoff: 40 * time.Millisecond,
+		MaxBackoff:     40 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewClient returned error: %v", err)
+	}
+	_, err = client.Generate(context.Background(), ModelRequest{
+		Input: []InputItem{
+			UserMessageItem{Content: []TextPart{{Text: "hello"}}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+	if attempts != 2 {
+		t.Fatalf("expected 2 attempts, got %d", attempts)
+	}
+	if elapsed := time.Since(start); elapsed < 30*time.Millisecond {
+		t.Fatalf("expected retry backoff to be applied, elapsed=%v", elapsed)
 	}
 }
 

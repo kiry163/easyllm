@@ -12,15 +12,15 @@ import (
 type ToolDefinition = model.ToolDefinition
 
 type ToolCallContext struct {
-	CallID    string
-	Name      string
-	Iteration int
-	Metadata  map[string]any
+	CallID    string         `json:"call_id"`
+	Name      string         `json:"name"`
+	Iteration int            `json:"iteration"`
+	Metadata  map[string]any `json:"metadata"`
 }
 
 type ToolResult struct {
-	Message string
-	Data    map[string]any
+	Message string         `json:"message"`
+	Data    map[string]any `json:"data"`
 }
 
 type Tool interface {

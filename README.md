@@ -90,8 +90,13 @@ client, err := easyllm.NewClient(easyllm.Config{
 	TopP:           &topP,
 	MaxTokens:      &maxTokens,
 	EnableThinking: &enableThinking,
+	MaxAttempts:    3,
+	InitialBackoff: 200 * time.Millisecond,
+	MaxBackoff:     time.Second,
 })
 ```
+
+Retry behavior is configured from the same top-level `Config`. `MaxAttempts` controls the total number of tries, and backoff grows exponentially from `InitialBackoff` up to `MaxBackoff`.
 
 Provider-specific request body fields can be passed through `ExtraBody`. Values in `ExtraBody` are merged after normalized config fields, so they can override the final request body.
 

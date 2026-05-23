@@ -3,9 +3,9 @@ package easyllm
 import "github.com/kiry163/easyllm/internal/model"
 
 type Message struct {
-	Role       string
-	Content    string
-	ToolCallID string
+	Role       string `json:"role"`
+	Content    string `json:"content"`
+	ToolCallID string `json:"tool_call_id"`
 }
 
 type Session struct {
@@ -20,12 +20,12 @@ type Session struct {
 type SessionOption func(*Session)
 
 type SessionSnapshot struct {
-	ID           string
-	Items        []model.InputItem
-	Usage        model.Usage
-	LastResponse *ModelResponse
-	Iteration    int
-	Metadata     map[string]any
+	ID           string            `json:"id"`
+	Items        []model.InputItem `json:"items"`
+	Usage        model.Usage       `json:"usage"`
+	LastResponse *ModelResponse    `json:"last_response"`
+	Iteration    int               `json:"iteration"`
+	Metadata     map[string]any    `json:"metadata"`
 }
 
 func NewSession(opts ...SessionOption) *Session {

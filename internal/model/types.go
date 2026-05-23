@@ -1,15 +1,15 @@
 package model
 
 type Usage struct {
-	InputTokens       int
-	OutputTokens      int
-	TotalTokens       int
-	CachedInputTokens int
-	Details           map[string]any
+	InputTokens       int            `json:"input_tokens"`
+	OutputTokens      int            `json:"output_tokens"`
+	TotalTokens       int            `json:"total_tokens"`
+	CachedInputTokens int            `json:"cached_input_tokens"`
+	Details           map[string]any `json:"details"`
 }
 
 type TextPart struct {
-	Text string
+	Text string `json:"text"`
 }
 
 type InputItem interface {
@@ -21,88 +21,88 @@ type OutputItem interface {
 }
 
 type SystemMessageItem struct {
-	ID       string
-	Metadata map[string]any
-	Content  []TextPart
+	ID       string         `json:"id"`
+	Metadata map[string]any `json:"metadata"`
+	Content  []TextPart     `json:"content"`
 }
 
 func (SystemMessageItem) inputItem() {}
 
 type UserMessageItem struct {
-	ID       string
-	Metadata map[string]any
-	Content  []TextPart
+	ID       string         `json:"id"`
+	Metadata map[string]any `json:"metadata"`
+	Content  []TextPart     `json:"content"`
 }
 
 func (UserMessageItem) inputItem() {}
 
 type AssistantMessageItem struct {
-	ID       string
-	Metadata map[string]any
-	Content  []TextPart
+	ID       string         `json:"id"`
+	Metadata map[string]any `json:"metadata"`
+	Content  []TextPart     `json:"content"`
 }
 
 func (AssistantMessageItem) inputItem() {}
 
 type ToolCallItem struct {
-	ID           string
-	CallID       string
-	Name         string
-	Arguments    map[string]any
-	RawArguments string
-	Repaired     bool
-	Metadata     map[string]any
+	ID           string         `json:"id"`
+	CallID       string         `json:"call_id"`
+	Name         string         `json:"name"`
+	Arguments    map[string]any `json:"arguments"`
+	RawArguments string         `json:"raw_arguments"`
+	Repaired     bool           `json:"repaired"`
+	Metadata     map[string]any `json:"metadata"`
 }
 
 func (ToolCallItem) inputItem() {}
 
 type ToolResultItem struct {
-	ID       string
-	CallID   string
-	Name     string
-	Content  string
-	Metadata map[string]any
+	ID       string         `json:"id"`
+	CallID   string         `json:"call_id"`
+	Name     string         `json:"name"`
+	Content  string         `json:"content"`
+	Metadata map[string]any `json:"metadata"`
 }
 
 func (ToolResultItem) inputItem() {}
 
 type MessageOutput struct {
-	Role    string
-	Content []TextPart
+	Role    string     `json:"role"`
+	Content []TextPart `json:"content"`
 }
 
 func (MessageOutput) outputItem() {}
 
 type ToolCallOutput struct {
-	CallID       string
-	Name         string
-	Arguments    map[string]any
-	RawArguments string
-	Repaired     bool
+	CallID       string         `json:"call_id"`
+	Name         string         `json:"name"`
+	Arguments    map[string]any `json:"arguments"`
+	RawArguments string         `json:"raw_arguments"`
+	Repaired     bool           `json:"repaired"`
 }
 
 func (ToolCallOutput) outputItem() {}
 
 type ToolDefinition struct {
-	Name        string
-	Description string
-	Parameters  map[string]any
-	Strict      *bool
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Parameters  map[string]any `json:"parameters"`
+	Strict      *bool          `json:"strict"`
 }
 
 type ModelRequest struct {
-	Model    string
-	Input    []InputItem
-	Tools    []ToolDefinition
-	Options  map[string]any
-	Metadata map[string]any
+	Model    string           `json:"model"`
+	Input    []InputItem      `json:"input"`
+	Tools    []ToolDefinition `json:"tools"`
+	Options  map[string]any   `json:"options"`
+	Metadata map[string]any   `json:"metadata"`
 }
 
 type ModelResponse struct {
-	Output       []OutputItem
-	FinishReason string
-	Usage        Usage
-	ResponseID   string
-	Provider     string
-	Raw          any
+	Output       []OutputItem `json:"output"`
+	FinishReason string       `json:"finish_reason"`
+	Usage        Usage        `json:"usage"`
+	ResponseID   string       `json:"response_id"`
+	Provider     string       `json:"provider"`
+	Raw          any          `json:"raw"`
 }

@@ -2,7 +2,9 @@ package easyllm
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/kiry163/easyllm/internal/model"
@@ -321,6 +323,61 @@ func TestRunCopiesUsageOntoSessionSnapshot(t *testing.T) {
 		result.Session.Usage.TotalTokens != result.Usage.TotalTokens ||
 		result.Session.Usage.CachedInputTokens != result.Usage.CachedInputTokens {
 		t.Fatalf("expected session usage to match run usage: session=%+v run=%+v", result.Session.Usage, result.Usage)
+	}
+}
+
+func TestRunResultJSONUsesStableFieldNames(t *testing.T) {
+	runTool, err := NewTool[submitArgs](submitTool{})
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+	runtime := NewEngine(
+		&usageClient{},
+		WithTools(runTool),
+	)
+
+	result, err := runtime.Run(context.Background(), RunRequest{Input: "submit"})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("Marshal returned error: %v", err)
+	}
+	text := string(data)
+
+	for _, want := range []string{
+		`"output_text"`,
+		`"model_call_count"`,
+		`"tool_call_count"`,
+		`"tool_results"`,
+		`"stop_reason"`,
+		`"last_response"`,
+		`"finish_reason"`,
+		`"response_id"`,
+		`"call_id"`,
+		`"raw_arguments"`,
+		`"input_tokens"`,
+		`"cached_input_tokens"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected marshaled JSON to contain %s: %s", want, text)
+		}
+	}
+
+	for _, unwanted := range []string{
+		`"OutputText"`,
+		`"ModelCallCount"`,
+		`"ToolCallCount"`,
+		`"LastResponse"`,
+		`"FinishReason"`,
+		`"CallID"`,
+		`"InputTokens"`,
+	} {
+		if strings.Contains(text, unwanted) {
+			t.Fatalf("expected marshaled JSON to avoid %s: %s", unwanted, text)
+		}
 	}
 }
 
