@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/kiry163/easyllm/internal/model"
 )
@@ -143,5 +144,81 @@ func TestImageClientRejectsMissingPrompt(t *testing.T) {
 	}
 	if got := err.Error(); got != "prompt is required" {
 		t.Fatalf("unexpected error: %q", got)
+	}
+}
+
+func TestImageClientRetriesServerErrors(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			http.Error(w, "temporary", http.StatusBadGateway)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"created": 1,
+			"data":    []map[string]any{{"b64_json": "aGVsbG8="}},
+		})
+	}))
+	defer server.Close()
+
+	client := NewProvider(
+		WithAPIKey("token"),
+		WithBaseURL(server.URL),
+		WithRetry(RetryConfig{MaxAttempts: 2}),
+	).ImageClient(ImageClientConfig{Model: "gpt-image-1"})
+
+	resp, err := client.GenerateImage(context.Background(), model.ImageRequest{Prompt: "diagram"})
+	if err != nil {
+		t.Fatalf("GenerateImage returned error: %v", err)
+	}
+	if attempts != 2 {
+		t.Fatalf("expected 2 attempts, got %d", attempts)
+	}
+	if len(resp.Images) != 1 {
+		t.Fatalf("unexpected response: %#v", resp)
+	}
+}
+
+func TestImageClientReturnsNon2xxPreview(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "bad input", http.StatusBadRequest)
+	}))
+	defer server.Close()
+
+	client := NewProvider(
+		WithAPIKey("token"),
+		WithBaseURL(server.URL),
+	).ImageClient(ImageClientConfig{Model: "gpt-image-1"})
+
+	_, err := client.GenerateImage(context.Background(), model.ImageRequest{Prompt: "diagram"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if got := err.Error(); got != "request failed: status=400 body=bad input\n" {
+		t.Fatalf("unexpected error: %q", got)
+	}
+}
+
+func TestImageClientUsesCustomHTTPClientTimeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(100 * time.Millisecond)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"created": 1,
+			"data":    []map[string]any{{"b64_json": "aGVsbG8="}},
+		})
+	}))
+	defer server.Close()
+
+	httpClient := &http.Client{Timeout: 10 * time.Millisecond}
+	client := NewProvider(
+		WithAPIKey("token"),
+		WithBaseURL(server.URL),
+		WithHTTPClient(httpClient),
+	).ImageClient(ImageClientConfig{Model: "gpt-image-1"})
+
+	_, err := client.GenerateImage(context.Background(), model.ImageRequest{Prompt: "diagram"})
+	if err == nil {
+		t.Fatal("expected timeout error")
 	}
 }

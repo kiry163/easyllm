@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/kiry163/easyllm/internal/model"
 )
@@ -78,24 +79,11 @@ func (c *ImageClient) GenerateImage(ctx context.Context, req model.ImageRequest)
 		return nil, fmt.Errorf("marshal image request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/images/generations", bytes.NewReader(payload))
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	if c.apiKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
-	}
-
-	resp, err := c.httpClient.Do(httpReq)
+	resp, err := c.do(ctx, payload)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		preview, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("request failed: status=%d body=%s", resp.StatusCode, string(preview))
-	}
 
 	var raw struct {
 		Created int64 `json:"created"`
@@ -130,4 +118,80 @@ func (c *ImageClient) GenerateImage(ctx context.Context, req model.ImageRequest)
 		})
 	}
 	return out, nil
+}
+
+func (c *ImageClient) do(ctx context.Context, payload []byte) (*http.Response, error) {
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts(c.retry); attempt++ {
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/images/generations", bytes.NewReader(payload))
+		if err != nil {
+			return nil, fmt.Errorf("create request: %w", err)
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		if c.apiKey != "" {
+			httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+		}
+
+		resp, err := c.httpClient.Do(httpReq)
+		if err != nil {
+			lastErr = err
+			if !shouldRetryImageRequest(ctx, c.retry, attempt, 0, err) {
+				return nil, lastErr
+			}
+			continue
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			preview, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+			_ = resp.Body.Close()
+			lastErr = fmt.Errorf("request failed: status=%d body=%s", resp.StatusCode, string(preview))
+			if !shouldRetryImageRequest(ctx, c.retry, attempt, resp.StatusCode, nil) {
+				return nil, lastErr
+			}
+			continue
+		}
+		return resp, nil
+	}
+	return nil, lastErr
+}
+
+func maxAttempts(cfg RetryConfig) int {
+	if cfg.MaxAttempts > 0 {
+		return cfg.MaxAttempts
+	}
+	return 1
+}
+
+func shouldRetryImageRequest(ctx context.Context, cfg RetryConfig, attempt int, statusCode int, err error) bool {
+	if attempt >= maxAttempts(cfg) {
+		return false
+	}
+	if err == nil && (statusCode < 500 || statusCode >= 600) {
+		return false
+	}
+	delay := retryDelay(cfg, attempt)
+	if delay <= 0 {
+		return true
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+func retryDelay(cfg RetryConfig, attempt int) time.Duration {
+	delay := cfg.InitialBackoff
+	if delay <= 0 {
+		delay = 100 * time.Millisecond
+	}
+	for i := 1; i < attempt; i++ {
+		delay *= 2
+	}
+	if cfg.MaxBackoff > 0 && delay > cfg.MaxBackoff {
+		return cfg.MaxBackoff
+	}
+	return delay
 }
