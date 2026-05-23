@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	provider "github.com/kiry163/easyllm/internal/model"
+	"github.com/kiry163/easyllm/internal/model"
 	"github.com/kiry163/easyllm/internal/openai/compat"
 )
 
@@ -13,9 +13,10 @@ const DefaultBaseURL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 type RetryConfig = compat.RetryConfig
 
 type Provider struct {
-	apiKey  string
-	baseURL string
-	options []compat.Option
+	apiKey    string
+	baseURL   string
+	extraBody map[string]any
+	options   []compat.Option
 }
 
 type ProviderOption func(*Provider)
@@ -50,6 +51,10 @@ func WithTimeout(timeout time.Duration) ProviderOption {
 	return func(p *Provider) { p.options = append(p.options, compat.WithTimeout(timeout)) }
 }
 
+func WithExtraBody(extra map[string]any) ProviderOption {
+	return func(p *Provider) { p.extraBody = cloneMap(extra) }
+}
+
 func NewProvider(opts ...ProviderOption) *Provider {
 	p := &Provider{
 		baseURL: DefaultBaseURL,
@@ -62,18 +67,21 @@ func NewProvider(opts ...ProviderOption) *Provider {
 	return p
 }
 
-func (p *Provider) ChatClient(config ChatClientConfig) provider.Client {
+func (p *Provider) ChatClient(config ChatClientConfig) model.Client {
 	return p.model(config, compat.TransportChat)
 }
 
-func (p *Provider) ResponsesClient(config ResponsesClientConfig) provider.Client {
+func (p *Provider) ResponsesClient(config ResponsesClientConfig) model.Client {
 	return p.model(ChatClientConfig(config), compat.TransportResponses)
 }
 
-func (p *Provider) model(config ChatClientConfig, transport compat.Transport) provider.Client {
+func (p *Provider) model(config ChatClientConfig, transport compat.Transport) model.Client {
 	extraBody := map[string]any{}
 	if config.Thinking != nil {
 		extraBody["enable_thinking"] = *config.Thinking
+	}
+	for key, value := range p.extraBody {
+		extraBody[key] = value
 	}
 	compatOpts := []compat.Option{
 		compat.WithProviderName("qwen"),
@@ -94,4 +102,15 @@ func (p *Provider) model(config ChatClientConfig, transport compat.Transport) pr
 		return compat.NewResponsesClient(p.apiKey, p.baseURL, compatOpts...)
 	}
 	return compat.NewChatClient(p.apiKey, p.baseURL, compatOpts...)
+}
+
+func cloneMap(src map[string]any) map[string]any {
+	if len(src) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(src))
+	for key, value := range src {
+		out[key] = value
+	}
+	return out
 }

@@ -6,10 +6,10 @@ import (
 	"fmt"
 
 	"github.com/kiry163/easyllm/internal/jsonrepair"
-	provider "github.com/kiry163/easyllm/internal/model"
+	"github.com/kiry163/easyllm/internal/model"
 )
 
-type ToolDefinition = provider.ToolDefinition
+type ToolDefinition = model.ToolDefinition
 
 type ToolCallContext struct {
 	CallID    string

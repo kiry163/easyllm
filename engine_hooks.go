@@ -1,6 +1,6 @@
 package easyllm
 
-import provider "github.com/kiry163/easyllm/internal/model"
+import "github.com/kiry163/easyllm/internal/model"
 
 type Hooks struct {
 	OnRunStart       func(RunStartEvent) error
@@ -30,13 +30,13 @@ type ModelResponseEvent struct {
 
 type ToolCallStartEvent struct {
 	Session  SessionSnapshot
-	Call     provider.ToolCallOutput
+	Call     model.ToolCallOutput
 	Metadata map[string]any
 }
 
 type ToolCallFinishEvent struct {
 	Session  SessionSnapshot
-	Call     provider.ToolCallOutput
+	Call     model.ToolCallOutput
 	Result   *ToolResult
 	Err      error
 	Metadata map[string]any

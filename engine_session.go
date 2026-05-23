@@ -1,6 +1,6 @@
 package easyllm
 
-import provider "github.com/kiry163/easyllm/internal/model"
+import "github.com/kiry163/easyllm/internal/model"
 
 type Message struct {
 	Role       string
@@ -10,8 +10,8 @@ type Message struct {
 
 type Session struct {
 	ID           string
-	Items        []provider.InputItem
-	Usage        provider.Usage
+	Items        []model.InputItem
+	Usage        model.Usage
 	LastResponse *ModelResponse
 	Iteration    int
 	Metadata     map[string]any
@@ -21,8 +21,8 @@ type SessionOption func(*Session)
 
 type SessionSnapshot struct {
 	ID           string
-	Items        []provider.InputItem
-	Usage        provider.Usage
+	Items        []model.InputItem
+	Usage        model.Usage
 	LastResponse *ModelResponse
 	Iteration    int
 	Metadata     map[string]any
@@ -41,20 +41,20 @@ func NewSession(opts ...SessionOption) *Session {
 }
 
 func (s *Session) AppendUserText(text string) {
-	s.Items = append(s.Items, provider.UserMessageItem{
-		Content: []provider.TextPart{{Text: text}},
+	s.Items = append(s.Items, model.UserMessageItem{
+		Content: []model.TextPart{{Text: text}},
 	})
 }
 
-func (s *Session) AppendItems(items ...provider.InputItem) {
+func (s *Session) AppendItems(items ...model.InputItem) {
 	s.Items = append(s.Items, items...)
 }
 
-func (s *Session) ItemsView() []provider.InputItem {
+func (s *Session) ItemsView() []model.InputItem {
 	if len(s.Items) == 0 {
 		return nil
 	}
-	out := make([]provider.InputItem, 0, len(s.Items))
+	out := make([]model.InputItem, 0, len(s.Items))
 	out = append(out, s.Items...)
 	return out
 }
@@ -63,13 +63,13 @@ func (s *Session) MessagesView() []Message {
 	out := make([]Message, 0, len(s.Items))
 	for _, item := range s.Items {
 		switch current := item.(type) {
-		case provider.SystemMessageItem:
+		case model.SystemMessageItem:
 			out = append(out, Message{Role: "system", Content: firstText(current.Content)})
-		case provider.UserMessageItem:
+		case model.UserMessageItem:
 			out = append(out, Message{Role: "user", Content: firstText(current.Content)})
-		case provider.AssistantMessageItem:
+		case model.AssistantMessageItem:
 			out = append(out, Message{Role: "assistant", Content: firstText(current.Content)})
-		case provider.ToolResultItem:
+		case model.ToolResultItem:
 			out = append(out, Message{Role: "tool", Content: current.Content, ToolCallID: current.CallID})
 		}
 	}
@@ -87,7 +87,7 @@ func (s *Session) Snapshot() SessionSnapshot {
 	}
 }
 
-func firstText(parts []provider.TextPart) string {
+func firstText(parts []model.TextPart) string {
 	if len(parts) == 0 {
 		return ""
 	}

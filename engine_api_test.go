@@ -5,17 +5,17 @@ import (
 	"errors"
 	"testing"
 
-	provider "github.com/kiry163/easyllm/internal/model"
+	"github.com/kiry163/easyllm/internal/model"
 )
 
 type fakeClient struct{}
 
-func (fakeClient) Generate(ctx context.Context, req provider.ModelRequest) (*provider.ModelResponse, error) {
-	return &provider.ModelResponse{
-		Output: []provider.OutputItem{
-			provider.MessageOutput{
+func (fakeClient) Generate(ctx context.Context, req model.ModelRequest) (*model.ModelResponse, error) {
+	return &model.ModelResponse{
+		Output: []model.OutputItem{
+			model.MessageOutput{
 				Role: "assistant",
-				Content: []provider.TextPart{
+				Content: []model.TextPart{
 					{Text: "done"},
 				},
 			},
@@ -43,12 +43,12 @@ type toolCallingClient struct {
 	calls int
 }
 
-func (c *toolCallingClient) Generate(ctx context.Context, req provider.ModelRequest) (*provider.ModelResponse, error) {
+func (c *toolCallingClient) Generate(ctx context.Context, req model.ModelRequest) (*model.ModelResponse, error) {
 	c.calls++
 	if c.calls == 1 {
-		return &provider.ModelResponse{
-			Output: []provider.OutputItem{
-				provider.ToolCallOutput{
+		return &model.ModelResponse{
+			Output: []model.OutputItem{
+				model.ToolCallOutput{
 					CallID:    "call_1",
 					Name:      "submit",
 					Arguments: map[string]any{"value": "ok"},
@@ -57,11 +57,11 @@ func (c *toolCallingClient) Generate(ctx context.Context, req provider.ModelRequ
 			FinishReason: "tool_calls",
 		}, nil
 	}
-	return &provider.ModelResponse{
-		Output: []provider.OutputItem{
-			provider.MessageOutput{
+	return &model.ModelResponse{
+		Output: []model.OutputItem{
+			model.MessageOutput{
 				Role:    "assistant",
-				Content: []provider.TextPart{{Text: "done"}},
+				Content: []model.TextPart{{Text: "done"}},
 			},
 		},
 		FinishReason: "stop",
@@ -181,7 +181,7 @@ func TestRunCreatesSessionWhenNil(t *testing.T) {
 func TestSessionMessagesViewIncludesToolResults(t *testing.T) {
 	session := NewSession()
 	session.AppendUserText("hello")
-	session.AppendItems(provider.ToolResultItem{
+	session.AppendItems(model.ToolResultItem{
 		CallID:  "call_1",
 		Name:    "submit",
 		Content: "{\"status\":\"ok\"}",
@@ -200,19 +200,19 @@ type usageClient struct {
 	calls int
 }
 
-func (c *usageClient) Generate(ctx context.Context, req provider.ModelRequest) (*provider.ModelResponse, error) {
+func (c *usageClient) Generate(ctx context.Context, req model.ModelRequest) (*model.ModelResponse, error) {
 	c.calls++
 	if c.calls == 1 {
-		return &provider.ModelResponse{
-			Output: []provider.OutputItem{
-				provider.ToolCallOutput{
+		return &model.ModelResponse{
+			Output: []model.OutputItem{
+				model.ToolCallOutput{
 					CallID:    "call_1",
 					Name:      "submit",
 					Arguments: map[string]any{"value": "ok"},
 				},
 			},
 			FinishReason: "tool_calls",
-			Usage: provider.Usage{
+			Usage: model.Usage{
 				InputTokens:       10,
 				OutputTokens:      3,
 				TotalTokens:       13,
@@ -220,15 +220,15 @@ func (c *usageClient) Generate(ctx context.Context, req provider.ModelRequest) (
 			},
 		}, nil
 	}
-	return &provider.ModelResponse{
-		Output: []provider.OutputItem{
-			provider.MessageOutput{
+	return &model.ModelResponse{
+		Output: []model.OutputItem{
+			model.MessageOutput{
 				Role:    "assistant",
-				Content: []provider.TextPart{{Text: "done"}},
+				Content: []model.TextPart{{Text: "done"}},
 			},
 		},
 		FinishReason: "stop",
-		Usage: provider.Usage{
+		Usage: model.Usage{
 			InputTokens:       8,
 			OutputTokens:      2,
 			TotalTokens:       10,
@@ -326,7 +326,7 @@ func TestRunCopiesUsageOntoSessionSnapshot(t *testing.T) {
 
 type errorClient struct{}
 
-func (errorClient) Generate(ctx context.Context, req provider.ModelRequest) (*provider.ModelResponse, error) {
+func (errorClient) Generate(ctx context.Context, req model.ModelRequest) (*model.ModelResponse, error) {
 	return nil, errors.New("model unavailable")
 }
 

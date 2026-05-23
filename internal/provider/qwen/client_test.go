@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	provider "github.com/kiry163/easyllm/internal/model"
+	"github.com/kiry163/easyllm/internal/model"
 )
 
 func TestClientUsesProviderOwnedModelAndThinkingDefaults(t *testing.T) {
@@ -59,9 +59,9 @@ func TestClientUsesProviderOwnedModelAndThinkingDefaults(t *testing.T) {
 		TopP:        &topP,
 		MaxTokens:   &maxTokens,
 	})
-	resp, err := client.Generate(context.Background(), provider.ModelRequest{
-		Input: []provider.InputItem{
-			provider.UserMessageItem{Content: []provider.TextPart{{Text: "hello"}}},
+	resp, err := client.Generate(context.Background(), model.ModelRequest{
+		Input: []model.InputItem{
+			model.UserMessageItem{Content: []model.TextPart{{Text: "hello"}}},
 		},
 	})
 	if err != nil {
@@ -101,9 +101,9 @@ func TestProviderSupportsRetryOption(t *testing.T) {
 		}),
 	)
 	client := qwenProvider.ChatClient(ChatClientConfig{Model: "qwen-plus"})
-	_, err := client.Generate(context.Background(), provider.ModelRequest{
-		Input: []provider.InputItem{
-			provider.UserMessageItem{Content: []provider.TextPart{{Text: "hello"}}},
+	_, err := client.Generate(context.Background(), model.ModelRequest{
+		Input: []model.InputItem{
+			model.UserMessageItem{Content: []model.TextPart{{Text: "hello"}}},
 		},
 	})
 	if err != nil {
@@ -134,9 +134,9 @@ func TestProviderSupportsTimeoutOption(t *testing.T) {
 		WithTimeout(10*time.Millisecond),
 	)
 	client := qwenProvider.ChatClient(ChatClientConfig{Model: "qwen-plus"})
-	_, err := client.Generate(context.Background(), provider.ModelRequest{
-		Input: []provider.InputItem{
-			provider.UserMessageItem{Content: []provider.TextPart{{Text: "hello"}}},
+	_, err := client.Generate(context.Background(), model.ModelRequest{
+		Input: []model.InputItem{
+			model.UserMessageItem{Content: []model.TextPart{{Text: "hello"}}},
 		},
 	})
 	if err == nil {

@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/kiry163/easyllm/internal/jsonrepair"
-	provider "github.com/kiry163/easyllm/internal/model"
+	"github.com/kiry163/easyllm/internal/model"
 )
 
 type Transport string
@@ -156,7 +156,7 @@ func newClient(apiKey, baseURL string, transport Transport, opts ...Option) *Cli
 	return client
 }
 
-func (c *Client) Generate(ctx context.Context, req provider.ModelRequest) (*provider.ModelResponse, error) {
+func (c *Client) Generate(ctx context.Context, req model.ModelRequest) (*model.ModelResponse, error) {
 	switch c.transport {
 	case TransportResponses:
 		return c.generateResponses(ctx, req)
@@ -165,7 +165,7 @@ func (c *Client) Generate(ctx context.Context, req provider.ModelRequest) (*prov
 	}
 }
 
-func (c *Client) generateChat(ctx context.Context, req provider.ModelRequest) (*provider.ModelResponse, error) {
+func (c *Client) generateChat(ctx context.Context, req model.ModelRequest) (*model.ModelResponse, error) {
 	body := map[string]any{
 		"model":    c.resolveModel(req.Model),
 		"messages": openAIChatMessages(req.Input),
@@ -184,7 +184,7 @@ func (c *Client) generateChat(ctx context.Context, req provider.ModelRequest) (*
 	return c.do(ctx, payload, "/chat/completions", parseChatResponse)
 }
 
-func (c *Client) generateResponses(ctx context.Context, req provider.ModelRequest) (*provider.ModelResponse, error) {
+func (c *Client) generateResponses(ctx context.Context, req model.ModelRequest) (*model.ModelResponse, error) {
 	body := map[string]any{
 		"model": c.resolveModel(req.Model),
 		"input": openAIResponsesInput(req.Input),
@@ -203,7 +203,7 @@ func (c *Client) generateResponses(ctx context.Context, req provider.ModelReques
 	return c.do(ctx, payload, "/responses", parseResponsesResponse)
 }
 
-func (c *Client) do(ctx context.Context, payload []byte, path string, parse func(io.Reader) (*provider.ModelResponse, error)) (*provider.ModelResponse, error) {
+func (c *Client) do(ctx context.Context, payload []byte, path string, parse func(io.Reader) (*model.ModelResponse, error)) (*model.ModelResponse, error) {
 	var lastErr error
 	for attempt := 1; attempt <= c.retry.maxAttempts(); attempt++ {
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(payload))
@@ -278,20 +278,20 @@ func (c *Client) mergedBody(options map[string]any) map[string]any {
 	return merged
 }
 
-func openAIChatMessages(items []provider.InputItem) []map[string]any {
+func openAIChatMessages(items []model.InputItem) []map[string]any {
 	if len(items) == 0 {
 		return nil
 	}
 	out := make([]map[string]any, 0, len(items))
 	for _, item := range items {
 		switch current := item.(type) {
-		case provider.SystemMessageItem:
+		case model.SystemMessageItem:
 			out = append(out, map[string]any{"role": "system", "content": textPartsToString(current.Content)})
-		case provider.UserMessageItem:
+		case model.UserMessageItem:
 			out = append(out, map[string]any{"role": "user", "content": textPartsToString(current.Content)})
-		case provider.AssistantMessageItem:
+		case model.AssistantMessageItem:
 			out = append(out, map[string]any{"role": "assistant", "content": textPartsToString(current.Content)})
-		case provider.ToolCallItem:
+		case model.ToolCallItem:
 			out = append(out, map[string]any{
 				"role": "assistant",
 				"tool_calls": []map[string]any{{
@@ -303,7 +303,7 @@ func openAIChatMessages(items []provider.InputItem) []map[string]any {
 					},
 				}},
 			})
-		case provider.ToolResultItem:
+		case model.ToolResultItem:
 			out = append(out, map[string]any{
 				"role":         "tool",
 				"content":      current.Content,
@@ -314,29 +314,29 @@ func openAIChatMessages(items []provider.InputItem) []map[string]any {
 	return out
 }
 
-func openAIResponsesInput(items []provider.InputItem) []map[string]any {
+func openAIResponsesInput(items []model.InputItem) []map[string]any {
 	if len(items) == 0 {
 		return nil
 	}
 	out := make([]map[string]any, 0, len(items))
 	for _, item := range items {
 		switch current := item.(type) {
-		case provider.SystemMessageItem:
+		case model.SystemMessageItem:
 			out = append(out, map[string]any{"role": "system", "content": []map[string]any{{"type": "input_text", "text": textPartsToString(current.Content)}}})
-		case provider.UserMessageItem:
+		case model.UserMessageItem:
 			out = append(out, map[string]any{"role": "user", "content": []map[string]any{{"type": "input_text", "text": textPartsToString(current.Content)}}})
-		case provider.AssistantMessageItem:
+		case model.AssistantMessageItem:
 			out = append(out, map[string]any{"role": "assistant", "content": []map[string]any{{"type": "output_text", "text": textPartsToString(current.Content)}}})
-		case provider.ToolResultItem:
+		case model.ToolResultItem:
 			out = append(out, map[string]any{"type": "function_call_output", "call_id": current.CallID, "output": current.Content})
-		case provider.ToolCallItem:
+		case model.ToolCallItem:
 			out = append(out, map[string]any{"type": "function_call", "call_id": current.CallID, "name": current.Name, "arguments": toolArgumentsString(current.Arguments, current.RawArguments)})
 		}
 	}
 	return out
 }
 
-func parseChatResponse(r io.Reader) (*provider.ModelResponse, error) {
+func parseChatResponse(r io.Reader) (*model.ModelResponse, error) {
 	var raw struct {
 		Choices []struct {
 			Message struct {
@@ -363,8 +363,8 @@ func parseChatResponse(r io.Reader) (*provider.ModelResponse, error) {
 	if err := json.NewDecoder(r).Decode(&raw); err != nil {
 		return nil, err
 	}
-	out := &provider.ModelResponse{
-		Usage: provider.Usage{
+	out := &model.ModelResponse{
+		Usage: model.Usage{
 			InputTokens:       raw.Usage.PromptTokens,
 			OutputTokens:      raw.Usage.CompletionTokens,
 			TotalTokens:       raw.Usage.TotalTokens,
@@ -380,7 +380,7 @@ func parseChatResponse(r io.Reader) (*provider.ModelResponse, error) {
 		if err != nil {
 			args = map[string]any{"raw": call.Function.Arguments}
 		}
-		out.Output = append(out.Output, provider.ToolCallOutput{
+		out.Output = append(out.Output, model.ToolCallOutput{
 			CallID:       call.ID,
 			Name:         call.Function.Name,
 			Arguments:    args,
@@ -389,15 +389,15 @@ func parseChatResponse(r io.Reader) (*provider.ModelResponse, error) {
 		})
 	}
 	if len(out.Output) == 0 && raw.Choices[0].Message.Content != "" {
-		out.Output = append(out.Output, provider.MessageOutput{
+		out.Output = append(out.Output, model.MessageOutput{
 			Role:    "assistant",
-			Content: []provider.TextPart{{Text: raw.Choices[0].Message.Content}},
+			Content: []model.TextPart{{Text: raw.Choices[0].Message.Content}},
 		})
 	}
 	return out, nil
 }
 
-func parseResponsesResponse(r io.Reader) (*provider.ModelResponse, error) {
+func parseResponsesResponse(r io.Reader) (*model.ModelResponse, error) {
 	var raw struct {
 		ID     string `json:"id"`
 		Output []struct {
@@ -422,9 +422,9 @@ func parseResponsesResponse(r io.Reader) (*provider.ModelResponse, error) {
 	if err := json.NewDecoder(r).Decode(&raw); err != nil {
 		return nil, err
 	}
-	out := &provider.ModelResponse{
+	out := &model.ModelResponse{
 		ResponseID: raw.ID,
-		Usage: provider.Usage{
+		Usage: model.Usage{
 			InputTokens:       raw.Usage.InputTokens,
 			OutputTokens:      raw.Usage.OutputTokens,
 			TotalTokens:       raw.Usage.TotalTokens,
@@ -438,7 +438,7 @@ func parseResponsesResponse(r io.Reader) (*provider.ModelResponse, error) {
 			if err != nil {
 				args = map[string]any{"raw": item.Arguments}
 			}
-			out.Output = append(out.Output, provider.ToolCallOutput{
+			out.Output = append(out.Output, model.ToolCallOutput{
 				CallID:       item.CallID,
 				Name:         item.Name,
 				Arguments:    args,
@@ -446,19 +446,19 @@ func parseResponsesResponse(r io.Reader) (*provider.ModelResponse, error) {
 				Repaired:     repaired,
 			})
 		case "message":
-			parts := make([]provider.TextPart, 0, len(item.Content))
+			parts := make([]model.TextPart, 0, len(item.Content))
 			for _, part := range item.Content {
 				if part.Text != "" {
-					parts = append(parts, provider.TextPart{Text: part.Text})
+					parts = append(parts, model.TextPart{Text: part.Text})
 				}
 			}
-			out.Output = append(out.Output, provider.MessageOutput{Role: item.Role, Content: parts})
+			out.Output = append(out.Output, model.MessageOutput{Role: item.Role, Content: parts})
 		}
 	}
 	return out, nil
 }
 
-func openAIChatTools(tools []provider.ToolDefinition) []map[string]any {
+func openAIChatTools(tools []model.ToolDefinition) []map[string]any {
 	if len(tools) == 0 {
 		return nil
 	}
@@ -480,7 +480,7 @@ func openAIChatTools(tools []provider.ToolDefinition) []map[string]any {
 	return out
 }
 
-func openAIResponsesTools(tools []provider.ToolDefinition) []map[string]any {
+func openAIResponsesTools(tools []model.ToolDefinition) []map[string]any {
 	if len(tools) == 0 {
 		return nil
 	}
@@ -500,7 +500,7 @@ func openAIResponsesTools(tools []provider.ToolDefinition) []map[string]any {
 	return out
 }
 
-func textPartsToString(parts []provider.TextPart) string {
+func textPartsToString(parts []model.TextPart) string {
 	if len(parts) == 0 {
 		return ""
 	}

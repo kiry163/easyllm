@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	provider "github.com/kiry163/easyllm/internal/model"
+	"github.com/kiry163/easyllm/internal/model"
 )
 
 type runConfig struct {
@@ -29,11 +29,11 @@ type RunResult struct {
 	ToolCallCount  int
 	ToolResults    []ToolCallResult
 	StopReason     StopReason
-	Usage          provider.Usage
+	Usage          model.Usage
 }
 
 type ToolCallResult struct {
-	Call   provider.ToolCallOutput
+	Call   model.ToolCallOutput
 	Result ToolResult
 	Err    error
 }
@@ -119,11 +119,11 @@ func run(ctx context.Context, client Client, session *Session, metadata map[stri
 		hasToolCalls := false
 		for _, item := range resp.Output {
 			switch out := item.(type) {
-			case provider.MessageOutput:
+			case model.MessageOutput:
 				if len(out.Content) > 0 {
 					result.OutputText = out.Content[len(out.Content)-1].Text
 				}
-			case provider.ToolCallOutput:
+			case model.ToolCallOutput:
 				hasToolCalls = true
 				result.ToolCallCount++
 				if cfg.hooks.OnToolCallStart != nil {
@@ -144,7 +144,7 @@ func run(ctx context.Context, client Client, session *Session, metadata map[stri
 						"tool":    out.Name,
 						"message": fmt.Sprintf("tool %q not found", out.Name),
 					})
-					session.AppendItems(provider.ToolResultItem{
+					session.AppendItems(model.ToolResultItem{
 						CallID:  out.CallID,
 						Name:    out.Name,
 						Content: encodeToolError(out.Name, toolErr),
@@ -179,7 +179,7 @@ func run(ctx context.Context, client Client, session *Session, metadata map[stri
 				} else {
 					message = encodeToolSuccess(out.Name, outcome)
 				}
-				session.AppendItems(provider.ToolResultItem{
+				session.AppendItems(model.ToolResultItem{
 					CallID:  out.CallID,
 					Name:    out.Name,
 					Content: message,
@@ -224,19 +224,19 @@ func run(ctx context.Context, client Client, session *Session, metadata map[stri
 	return retResult, nil
 }
 
-func outputItemsToInputItems(items []provider.OutputItem) []provider.InputItem {
+func outputItemsToInputItems(items []model.OutputItem) []model.InputItem {
 	if len(items) == 0 {
 		return nil
 	}
-	out := make([]provider.InputItem, 0, len(items))
+	out := make([]model.InputItem, 0, len(items))
 	for _, item := range items {
 		switch current := item.(type) {
-		case provider.MessageOutput:
-			out = append(out, provider.AssistantMessageItem{
+		case model.MessageOutput:
+			out = append(out, model.AssistantMessageItem{
 				Content: current.Content,
 			})
-		case provider.ToolCallOutput:
-			out = append(out, provider.ToolCallItem{
+		case model.ToolCallOutput:
+			out = append(out, model.ToolCallItem{
 				CallID:       current.CallID,
 				Name:         current.Name,
 				Arguments:    current.Arguments,
@@ -248,7 +248,7 @@ func outputItemsToInputItems(items []provider.OutputItem) []provider.InputItem {
 	return out
 }
 
-func addUsage(dst *provider.Usage, src provider.Usage) {
+func addUsage(dst *model.Usage, src model.Usage) {
 	dst.InputTokens += src.InputTokens
 	dst.OutputTokens += src.OutputTokens
 	dst.TotalTokens += src.TotalTokens

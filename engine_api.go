@@ -3,7 +3,7 @@ package easyllm
 import (
 	"context"
 
-	provider "github.com/kiry163/easyllm/internal/model"
+	"github.com/kiry163/easyllm/internal/model"
 )
 
 type Engine struct {
@@ -74,8 +74,8 @@ func (e *Engine) Run(ctx context.Context, req RunRequest) (*RunResult, error) {
 		session = NewSession()
 	}
 	if e.instructions != "" && len(session.Items) == 0 {
-		session.AppendItems(provider.SystemMessageItem{
-			Content: []provider.TextPart{{Text: e.instructions}},
+		session.AppendItems(model.SystemMessageItem{
+			Content: []model.TextPart{{Text: e.instructions}},
 		})
 	}
 	if req.Input != "" {

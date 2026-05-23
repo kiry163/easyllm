@@ -5,26 +5,28 @@ import (
 	"net/http"
 	"time"
 
-	provider "github.com/kiry163/easyllm/internal/model"
+	"github.com/kiry163/easyllm/internal/model"
 	"github.com/kiry163/easyllm/internal/openai/compat"
 )
 
-type ModelRequest = provider.ModelRequest
-type ModelResponse = provider.ModelResponse
-type InputItem = provider.InputItem
-type OutputItem = provider.OutputItem
-type Usage = provider.Usage
-type TextPart = provider.TextPart
-type SystemMessageItem = provider.SystemMessageItem
-type UserMessageItem = provider.UserMessageItem
-type AssistantMessageItem = provider.AssistantMessageItem
-type ToolCallItem = provider.ToolCallItem
-type ToolResultItem = provider.ToolResultItem
-type MessageOutput = provider.MessageOutput
-type ToolCallOutput = provider.ToolCallOutput
-type ToolDefinition = provider.ToolDefinition
+type ModelRequest = model.ModelRequest
+type ModelResponse = model.ModelResponse
+type InputItem = model.InputItem
+type OutputItem = model.OutputItem
+type Usage = model.Usage
+type TextPart = model.TextPart
+type SystemMessageItem = model.SystemMessageItem
+type UserMessageItem = model.UserMessageItem
+type AssistantMessageItem = model.AssistantMessageItem
+type ToolCallItem = model.ToolCallItem
+type ToolResultItem = model.ToolResultItem
+type MessageOutput = model.MessageOutput
+type ToolCallOutput = model.ToolCallOutput
+type ToolDefinition = model.ToolDefinition
 
 type RetryConfig = compat.RetryConfig
+
+const DefaultBaseURL = "https://api.openai.com/v1"
 
 type Client struct {
 	inner *compat.Client
@@ -76,7 +78,9 @@ func WithDefaultOptions(options map[string]any) ProviderOption {
 }
 
 func NewProvider(opts ...ProviderOption) *Provider {
-	p := &Provider{}
+	p := &Provider{
+		baseURL: DefaultBaseURL,
+	}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(p)
