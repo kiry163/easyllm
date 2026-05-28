@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/kiry163/easyllm/internal/jsonrepair"
 	"github.com/kiry163/easyllm/internal/model"
@@ -63,11 +64,13 @@ func (c *Client) generateResponsesStream(ctx context.Context, req model.ModelReq
 	return c.doStream(ctx, payload, "/responses", c.parseResponsesStream(handler))
 }
 
-func (c *Client) doStream(ctx context.Context, payload []byte, path string, parse func(io.Reader) (*model.ModelResponse, error)) (*model.ModelResponse, error) {
+func (c *Client) doStream(ctx context.Context, payload []byte, path string, parse func(context.Context, io.Reader) (*model.ModelResponse, bool, error)) (*model.ModelResponse, error) {
 	var lastErr error
-	for attempt := 1; attempt <= c.retry.maxAttempts(); attempt++ {
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(payload))
+	for attempt := 1; attempt <= c.retry.maxRetries()+1; attempt++ {
+		streamCtx, cancel := context.WithCancel(ctx)
+		httpReq, err := http.NewRequestWithContext(streamCtx, http.MethodPost, c.baseURL+path, bytes.NewReader(payload))
 		if err != nil {
+			cancel()
 			return nil, fmt.Errorf("create request: %w", err)
 		}
 		httpReq.Header.Set("Content-Type", "application/json")
@@ -77,6 +80,7 @@ func (c *Client) doStream(ctx context.Context, payload []byte, path string, pars
 		}
 		resp, err := c.httpClient.Do(httpReq)
 		if err != nil {
+			cancel()
 			lastErr = err
 			if !c.shouldRetry(ctx, attempt, 0, err) {
 				return nil, lastErr
@@ -87,15 +91,24 @@ func (c *Client) doStream(ctx context.Context, payload []byte, path string, pars
 			preview, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 			_ = resp.Body.Close()
 			lastErr = fmt.Errorf("request failed: status=%d body=%s", resp.StatusCode, string(preview))
+			cancel()
 			if !c.shouldRetry(ctx, attempt, resp.StatusCode, nil) {
 				return nil, lastErr
 			}
 			continue
 		}
-		defer resp.Body.Close()
-		out, err := parse(resp.Body)
+		out, firstEventReceived, err := parse(streamCtx, resp.Body)
+		closeErr := resp.Body.Close()
+		cancel()
 		if err != nil {
+			if !firstEventReceived && c.shouldRetry(ctx, attempt, 0, err) {
+				lastErr = err
+				continue
+			}
 			return nil, err
+		}
+		if closeErr != nil {
+			return nil, closeErr
 		}
 		out.Provider = c.providerName
 		return out, nil
@@ -103,8 +116,8 @@ func (c *Client) doStream(ctx context.Context, payload []byte, path string, pars
 	return nil, lastErr
 }
 
-func (c *Client) parseChatStream(handler model.StreamHandler) func(io.Reader) (*model.ModelResponse, error) {
-	return func(r io.Reader) (*model.ModelResponse, error) {
+func (c *Client) parseChatStream(handler model.StreamHandler) func(context.Context, io.Reader) (*model.ModelResponse, bool, error) {
+	return func(ctx context.Context, r io.Reader) (*model.ModelResponse, bool, error) {
 		type toolCallState struct {
 			CallID    string
 			Name      string
@@ -115,7 +128,7 @@ func (c *Client) parseChatStream(handler model.StreamHandler) func(io.Reader) (*
 		var reasoning strings.Builder
 		toolCalls := map[int]*toolCallState{}
 
-		err := readSSE(r, func(data []byte) error {
+		firstEventReceived, err := readSSE(ctx, r, c.streamFirstEventTimeout, func(data []byte) error {
 			var event struct {
 				ID      string `json:"id"`
 				Choices []struct {
@@ -191,7 +204,7 @@ func (c *Client) parseChatStream(handler model.StreamHandler) func(io.Reader) (*
 			return nil
 		})
 		if err != nil {
-			return nil, err
+			return nil, firstEventReceived, err
 		}
 
 		if len(toolCalls) > 0 {
@@ -214,7 +227,7 @@ func (c *Client) parseChatStream(handler model.StreamHandler) func(io.Reader) (*
 					ProviderState: chatProviderState(reasoning.String()),
 				})
 			}
-			return resp, nil
+			return resp, firstEventReceived, nil
 		}
 		if message.Len() > 0 {
 			resp.Output = append(resp.Output, model.MessageOutput{
@@ -223,17 +236,17 @@ func (c *Client) parseChatStream(handler model.StreamHandler) func(io.Reader) (*
 				ProviderState: chatProviderState(reasoning.String()),
 			})
 		}
-		return resp, nil
+		return resp, firstEventReceived, nil
 	}
 }
 
-func (c *Client) parseResponsesStream(handler model.StreamHandler) func(io.Reader) (*model.ModelResponse, error) {
-	return func(r io.Reader) (*model.ModelResponse, error) {
+func (c *Client) parseResponsesStream(handler model.StreamHandler) func(context.Context, io.Reader) (*model.ModelResponse, bool, error) {
+	return func(ctx context.Context, r io.Reader) (*model.ModelResponse, bool, error) {
 		resp := &model.ModelResponse{}
 		var message strings.Builder
 		var completed bool
 
-		err := readSSE(r, func(data []byte) error {
+		firstEventReceived, err := readSSE(ctx, r, c.streamFirstEventTimeout, func(data []byte) error {
 			var envelope struct {
 				Type     string          `json:"type"`
 				Delta    string          `json:"delta"`
@@ -266,10 +279,10 @@ func (c *Client) parseResponsesStream(handler model.StreamHandler) func(io.Reade
 			return nil
 		})
 		if err != nil {
-			return nil, err
+			return nil, firstEventReceived, err
 		}
 		if completed {
-			return resp, nil
+			return resp, firstEventReceived, nil
 		}
 		if message.Len() > 0 {
 			resp.Output = append(resp.Output, model.MessageOutput{
@@ -277,14 +290,81 @@ func (c *Client) parseResponsesStream(handler model.StreamHandler) func(io.Reade
 				Content: []model.TextPart{{Text: message.String()}},
 			})
 		}
-		return resp, nil
+		return resp, firstEventReceived, nil
 	}
 }
 
-func readSSE(r io.Reader, handle func([]byte) error) error {
+func readSSE(ctx context.Context, r io.Reader, firstEventTimeout time.Duration, handle func([]byte) error) (bool, error) {
+	if firstEventTimeout <= 0 {
+		return readSSESync(r, handle)
+	}
+	errCh := make(chan error, 1)
+	payloadCh := make(chan []byte)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go func() {
+		defer close(payloadCh)
+		_, err := readSSESync(r, func(data []byte) error {
+			select {
+			case payloadCh <- data:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		})
+		errCh <- err
+	}()
+
+	timer := time.NewTimer(firstEventTimeout)
+	defer timer.Stop()
+	firstEventReceived := false
+	for {
+		if firstEventReceived {
+			select {
+			case <-ctx.Done():
+				return true, ctx.Err()
+			case data, ok := <-payloadCh:
+				if !ok {
+					return true, <-errCh
+				}
+				if err := handle(data); err != nil {
+					cancel()
+					return true, err
+				}
+			}
+			continue
+		}
+
+		select {
+		case <-timer.C:
+			cancel()
+			return false, ErrStreamFirstEventTimeout
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case data, ok := <-payloadCh:
+			if !ok {
+				return false, <-errCh
+			}
+			firstEventReceived = true
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			if err := handle(data); err != nil {
+				cancel()
+				return true, err
+			}
+		}
+	}
+}
+
+func readSSESync(r io.Reader, handle func([]byte) error) (bool, error) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	var dataLines []string
+	var firstEventReceived bool
 	flush := func() error {
 		if len(dataLines) == 0 {
 			return nil
@@ -298,13 +378,14 @@ func readSSE(r io.Reader, handle func([]byte) error) error {
 		if payload == "[DONE]" {
 			return nil
 		}
+		firstEventReceived = true
 		return handle([]byte(payload))
 	}
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {
 			if err := flush(); err != nil {
-				return err
+				return firstEventReceived, err
 			}
 			continue
 		}
@@ -317,7 +398,7 @@ func readSSE(r io.Reader, handle func([]byte) error) error {
 		dataLines = append(dataLines, strings.TrimSpace(strings.TrimPrefix(line, "data:")))
 	}
 	if err := scanner.Err(); err != nil {
-		return err
+		return firstEventReceived, err
 	}
-	return flush()
+	return firstEventReceived, flush()
 }

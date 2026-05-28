@@ -60,7 +60,7 @@ func TestChatClientRetriesAndNormalizesToolCalls(t *testing.T) {
 	}))
 	defer server.Close()
 
-	openaiProvider := NewProvider(WithAPIKey("token"), WithBaseURL(server.URL), WithRetry(RetryConfig{MaxAttempts: 2}))
+	openaiProvider := NewProvider(WithAPIKey("token"), WithBaseURL(server.URL), WithRetry(RetryConfig{MaxRetries: 2}))
 	client := openaiProvider.ChatClient(ChatClientConfig{})
 	resp, err := client.Generate(context.Background(), ModelRequest{
 		Model: "gpt-test",

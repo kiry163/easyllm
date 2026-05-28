@@ -179,7 +179,7 @@ func TestProviderSupportsRetryOption(t *testing.T) {
 		WithAPIKey("token"),
 		WithBaseURL(server.URL),
 		WithRetry(RetryConfig{
-			MaxAttempts:    2,
+			MaxRetries:     2,
 			InitialBackoff: time.Millisecond,
 			MaxBackoff:     time.Millisecond,
 		}),

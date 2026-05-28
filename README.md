@@ -83,20 +83,41 @@ maxTokens := 512
 enableThinking := false
 
 client, err := easyllm.NewClient(easyllm.Config{
-	Provider:       easyllm.ProviderQwen,
-	APIKey:         os.Getenv("DASHSCOPE_API_KEY"),
-	Model:          "qwen-plus",
-	Temperature:    &temperature,
-	TopP:           &topP,
-	MaxTokens:      &maxTokens,
-	EnableThinking: &enableThinking,
-	MaxAttempts:    3,
-	InitialBackoff: 200 * time.Millisecond,
-	MaxBackoff:     time.Second,
+	Provider:                easyllm.ProviderQwen,
+	APIKey:                  os.Getenv("DASHSCOPE_API_KEY"),
+	Model:                   "qwen-plus",
+	Temperature:             &temperature,
+	TopP:                    &topP,
+	MaxTokens:               &maxTokens,
+	EnableThinking:          &enableThinking,
+	Timeout:                 2 * time.Minute,
+	StreamFirstEventTimeout: 20 * time.Second,
+	MaxRetries:              3,
+	InitialBackoff:          200 * time.Millisecond,
+	MaxBackoff:              time.Second,
 })
 ```
 
-Retry behavior is configured from the same top-level `Config`. `MaxAttempts` controls the total number of tries, and backoff grows exponentially from `InitialBackoff` up to `MaxBackoff`.
+Retry behavior is configured from the same top-level `Config`. `MaxRetries` controls the number of extra retries after the first attempt, and backoff grows exponentially from `InitialBackoff` up to `MaxBackoff`.
+
+`Timeout` is the total timeout for one HTTP request. For streaming requests, `StreamFirstEventTimeout` controls how long the client may wait for the first SSE event before it aborts with `easyllm.ErrStreamFirstEventTimeout`. If that happens before any stream event is emitted, the request can be retried according to `MaxRetries`.
+
+`Engine.Run(...)` and `Engine.RunStream(...)` wrap execution failures in `EngineError` so callers can branch on `Kind` while preserving the original error through `errors.Is` and `errors.As`:
+
+```go
+result, err := engine.Run(ctx, req)
+if err != nil {
+	var engineErr *easyllm.EngineError
+	if errors.As(err, &engineErr) {
+		switch engineErr.Kind {
+		case easyllm.EngineErrorTimeout:
+			// request timed out
+		case easyllm.EngineErrorModelRequest:
+			// provider request failed
+		}
+	}
+}
+```
 
 `EnableThinking` is currently a provider-level compatibility flag. Built-in providers map it only when they support a provider-specific thinking switch. Today that mainly applies to Qwen and DeepSeek.
 

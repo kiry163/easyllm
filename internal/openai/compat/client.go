@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,7 +23,7 @@ const (
 )
 
 type RetryConfig struct {
-	MaxAttempts    int
+	MaxRetries     int
 	InitialBackoff time.Duration
 	MaxBackoff     time.Duration
 }
@@ -30,21 +31,24 @@ type RetryConfig struct {
 type Option func(*Client)
 
 type Client struct {
-	apiKey         string
-	baseURL        string
-	defaultModel   string
-	providerName   string
-	httpClient     *http.Client
-	retry          RetryConfig
-	transport      Transport
-	extraBody      map[string]any
-	defaultOptions map[string]any
+	apiKey                  string
+	baseURL                 string
+	defaultModel            string
+	providerName            string
+	httpClient              *http.Client
+	streamFirstEventTimeout time.Duration
+	retry                   RetryConfig
+	transport               Transport
+	extraBody               map[string]any
+	defaultOptions          map[string]any
 }
+
+var ErrStreamFirstEventTimeout = errors.New("stream first event timeout")
 
 func WithRetry(config RetryConfig) Option {
 	return func(c *Client) {
-		if config.MaxAttempts > 0 {
-			c.retry.MaxAttempts = config.MaxAttempts
+		if config.MaxRetries > 0 {
+			c.retry.MaxRetries = config.MaxRetries
 		}
 		if config.InitialBackoff > 0 {
 			c.retry.InitialBackoff = config.InitialBackoff
@@ -67,6 +71,14 @@ func WithTimeout(timeout time.Duration) Option {
 	return func(c *Client) {
 		if timeout > 0 {
 			c.httpClient.Timeout = timeout
+		}
+	}
+}
+
+func WithStreamFirstEventTimeout(timeout time.Duration) Option {
+	return func(c *Client) {
+		if timeout > 0 {
+			c.streamFirstEventTimeout = timeout
 		}
 	}
 }
@@ -140,7 +152,6 @@ func newClient(apiKey, baseURL string, transport Transport, opts ...Option) *Cli
 			Timeout: 30 * time.Second,
 		},
 		retry: RetryConfig{
-			MaxAttempts:    1,
 			InitialBackoff: 100 * time.Millisecond,
 			MaxBackoff:     time.Second,
 		},
@@ -218,7 +229,7 @@ func (c *Client) generateResponses(ctx context.Context, req model.ModelRequest) 
 
 func (c *Client) do(ctx context.Context, payload []byte, path string, parse func(io.Reader) (*model.ModelResponse, error)) (*model.ModelResponse, error) {
 	var lastErr error
-	for attempt := 1; attempt <= c.retry.maxAttempts(); attempt++ {
+	for attempt := 1; attempt <= c.retry.maxRetries()+1; attempt++ {
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(payload))
 		if err != nil {
 			return nil, fmt.Errorf("create request: %w", err)

@@ -122,7 +122,7 @@ func (c *ImageClient) GenerateImage(ctx context.Context, req model.ImageRequest)
 
 func (c *ImageClient) do(ctx context.Context, payload []byte) (*http.Response, error) {
 	var lastErr error
-	for attempt := 1; attempt <= maxAttempts(c.retry); attempt++ {
+	for attempt := 1; attempt <= maxRetries(c.retry)+1; attempt++ {
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/images/generations", bytes.NewReader(payload))
 		if err != nil {
 			return nil, fmt.Errorf("create request: %w", err)
@@ -154,15 +154,15 @@ func (c *ImageClient) do(ctx context.Context, payload []byte) (*http.Response, e
 	return nil, lastErr
 }
 
-func maxAttempts(cfg RetryConfig) int {
-	if cfg.MaxAttempts > 0 {
-		return cfg.MaxAttempts
+func maxRetries(cfg RetryConfig) int {
+	if cfg.MaxRetries < 0 {
+		return 0
 	}
-	return 1
+	return cfg.MaxRetries
 }
 
 func shouldRetryImageRequest(ctx context.Context, cfg RetryConfig, attempt int, statusCode int, err error) bool {
-	if attempt >= maxAttempts(cfg) {
+	if attempt > maxRetries(cfg) {
 		return false
 	}
 	if err == nil && (statusCode < 500 || statusCode >= 600) {

@@ -40,17 +40,17 @@ type ToolCallResult struct {
 
 func run(ctx context.Context, client Client, session *Session, metadata map[string]any, cfg runConfig) (retResult *RunResult, retErr error) {
 	if session == nil {
-		return nil, fmt.Errorf("session is required")
+		return nil, newEngineError(EngineErrorInvalidRequest, "run", fmt.Errorf("session is required"))
 	}
 	if client == nil {
-		return nil, fmt.Errorf("client is required")
+		return nil, newEngineError(EngineErrorInvalidRequest, "run", fmt.Errorf("client is required"))
 	}
 	if cfg.maxModelCalls <= 0 {
 		cfg.maxModelCalls = 3
 	}
 	if cfg.hooks.OnRunStart != nil {
 		if err := cfg.hooks.OnRunStart(RunStartEvent{Session: session.Snapshot(), Metadata: cloneMap(metadata)}); err != nil {
-			return nil, err
+			return nil, newEngineError(EngineErrorHook, "on_run_start", err)
 		}
 	}
 
@@ -64,7 +64,7 @@ func run(ctx context.Context, client Client, session *Session, metadata map[stri
 				Metadata: cloneMap(metadata),
 			})
 			if finishErr != nil && retErr == nil {
-				retErr = finishErr
+				retErr = newEngineError(EngineErrorHook, "on_run_finish", finishErr)
 			}
 		}
 	}()
@@ -89,13 +89,13 @@ func run(ctx context.Context, client Client, session *Session, metadata map[stri
 				Request:  modelReq,
 				Metadata: cloneMap(metadata),
 			}); err != nil {
-				retErr = err
+				retErr = newEngineError(EngineErrorHook, "on_model_request", err)
 				return nil, retErr
 			}
 		}
 		resp, err := client.Generate(ctx, modelReq)
 		if err != nil {
-			retErr = err
+			retErr = modelEngineError("model_generate", err)
 			return nil, retErr
 		}
 		result.ModelCallCount++
@@ -111,7 +111,7 @@ func run(ctx context.Context, client Client, session *Session, metadata map[stri
 				Response: *resp,
 				Metadata: cloneMap(metadata),
 			}); err != nil {
-				retErr = err
+				retErr = newEngineError(EngineErrorHook, "on_model_response", err)
 				return nil, retErr
 			}
 		}
@@ -132,7 +132,7 @@ func run(ctx context.Context, client Client, session *Session, metadata map[stri
 						Call:     out,
 						Metadata: cloneMap(metadata),
 					}); err != nil {
-						retErr = err
+						retErr = newEngineError(EngineErrorHook, "on_tool_call_start", err)
 						return nil, retErr
 					}
 				}
@@ -156,7 +156,7 @@ func run(ctx context.Context, client Client, session *Session, metadata map[stri
 							Err:      toolErr,
 							Metadata: cloneMap(metadata),
 						}); err != nil {
-							retErr = err
+							retErr = newEngineError(EngineErrorHook, "on_tool_call_finish", err)
 							return nil, retErr
 						}
 					}
@@ -197,7 +197,7 @@ func run(ctx context.Context, client Client, session *Session, metadata map[stri
 						event.Result = &copyOutcome
 					}
 					if err := cfg.hooks.OnToolCallFinish(event); err != nil {
-						retErr = err
+						retErr = newEngineError(EngineErrorHook, "on_tool_call_finish", err)
 						return nil, retErr
 					}
 				}
@@ -226,17 +226,17 @@ func run(ctx context.Context, client Client, session *Session, metadata map[stri
 
 func runStream(ctx context.Context, client Client, session *Session, metadata map[string]any, handler StreamHandler, cfg runConfig) (retResult *RunResult, retErr error) {
 	if session == nil {
-		return nil, fmt.Errorf("session is required")
+		return nil, newEngineError(EngineErrorInvalidRequest, "run_stream", fmt.Errorf("session is required"))
 	}
 	if client == nil {
-		return nil, fmt.Errorf("client is required")
+		return nil, newEngineError(EngineErrorInvalidRequest, "run_stream", fmt.Errorf("client is required"))
 	}
 	if cfg.maxModelCalls <= 0 {
 		cfg.maxModelCalls = 3
 	}
 	if cfg.hooks.OnRunStart != nil {
 		if err := cfg.hooks.OnRunStart(RunStartEvent{Session: session.Snapshot(), Metadata: cloneMap(metadata)}); err != nil {
-			return nil, err
+			return nil, newEngineError(EngineErrorHook, "on_run_start", err)
 		}
 	}
 
@@ -250,7 +250,7 @@ func runStream(ctx context.Context, client Client, session *Session, metadata ma
 				Metadata: cloneMap(metadata),
 			})
 			if finishErr != nil && retErr == nil {
-				retErr = finishErr
+				retErr = newEngineError(EngineErrorHook, "on_run_finish", finishErr)
 			}
 		}
 	}()
@@ -275,7 +275,7 @@ func runStream(ctx context.Context, client Client, session *Session, metadata ma
 				Request:  modelReq,
 				Metadata: cloneMap(metadata),
 			}); err != nil {
-				retErr = err
+				retErr = newEngineError(EngineErrorHook, "on_model_request", err)
 				return nil, retErr
 			}
 		}
@@ -289,23 +289,25 @@ func runStream(ctx context.Context, client Client, session *Session, metadata ma
 				}
 				captured, ok := event.Raw.(*ModelResponse)
 				if !ok {
-					return fmt.Errorf("stream done event missing model response")
+					return newEngineError(EngineErrorInternal, "run_stream", fmt.Errorf("stream done event missing model response"))
 				}
 				resp = captured
 				return nil
 			case StreamEventMessageDelta:
 				if handler != nil {
-					return handler(event)
+					if err := handler(event); err != nil {
+						return newEngineError(EngineErrorHandler, "stream_handler", err)
+					}
 				}
 			}
 			return nil
 		})
 		if err != nil {
-			retErr = err
+			retErr = modelEngineError("model_generate_stream", err)
 			return nil, retErr
 		}
 		if resp == nil {
-			retErr = fmt.Errorf("stream completed without model response")
+			retErr = newEngineError(EngineErrorInternal, "run_stream", fmt.Errorf("stream completed without model response"))
 			return nil, retErr
 		}
 
@@ -322,7 +324,7 @@ func runStream(ctx context.Context, client Client, session *Session, metadata ma
 				Response: *resp,
 				Metadata: cloneMap(metadata),
 			}); err != nil {
-				retErr = err
+				retErr = newEngineError(EngineErrorHook, "on_model_response", err)
 				return nil, retErr
 			}
 		}
@@ -343,13 +345,13 @@ func runStream(ctx context.Context, client Client, session *Session, metadata ma
 						Call:     out,
 						Metadata: cloneMap(metadata),
 					}); err != nil {
-						retErr = err
+						retErr = newEngineError(EngineErrorHook, "on_tool_call_start", err)
 						return nil, retErr
 					}
 				}
 				if handler != nil {
 					if err := handler(StreamEvent{Type: StreamEventToolStart, ToolName: out.Name}); err != nil {
-						retErr = err
+						retErr = newEngineError(EngineErrorHandler, "stream_handler", err)
 						return nil, retErr
 					}
 				}
@@ -373,13 +375,13 @@ func runStream(ctx context.Context, client Client, session *Session, metadata ma
 							Err:      toolErr,
 							Metadata: cloneMap(metadata),
 						}); err != nil {
-							retErr = err
+							retErr = newEngineError(EngineErrorHook, "on_tool_call_finish", err)
 							return nil, retErr
 						}
 					}
 					if handler != nil {
 						if err := handler(StreamEvent{Type: StreamEventToolFinish, ToolName: out.Name}); err != nil {
-							retErr = err
+							retErr = newEngineError(EngineErrorHandler, "stream_handler", err)
 							return nil, retErr
 						}
 					}
@@ -420,13 +422,13 @@ func runStream(ctx context.Context, client Client, session *Session, metadata ma
 						event.Result = &copyOutcome
 					}
 					if err := cfg.hooks.OnToolCallFinish(event); err != nil {
-						retErr = err
+						retErr = newEngineError(EngineErrorHook, "on_tool_call_finish", err)
 						return nil, retErr
 					}
 				}
 				if handler != nil {
 					if err := handler(StreamEvent{Type: StreamEventToolFinish, ToolName: out.Name}); err != nil {
-						retErr = err
+						retErr = newEngineError(EngineErrorHandler, "stream_handler", err)
 						return nil, retErr
 					}
 				}
@@ -435,7 +437,7 @@ func runStream(ctx context.Context, client Client, session *Session, metadata ma
 					result.Session = session.Snapshot()
 					if handler != nil {
 						if err := handler(StreamEvent{Type: StreamEventDone}); err != nil {
-							retErr = err
+							retErr = newEngineError(EngineErrorHandler, "stream_handler", err)
 							return nil, retErr
 						}
 					}
@@ -450,7 +452,7 @@ func runStream(ctx context.Context, client Client, session *Session, metadata ma
 			result.Session = session.Snapshot()
 			if handler != nil {
 				if err := handler(StreamEvent{Type: StreamEventDone}); err != nil {
-					retErr = err
+					retErr = newEngineError(EngineErrorHandler, "stream_handler", err)
 					return nil, retErr
 				}
 			}
@@ -463,7 +465,7 @@ func runStream(ctx context.Context, client Client, session *Session, metadata ma
 	result.Session = session.Snapshot()
 	if handler != nil {
 		if err := handler(StreamEvent{Type: StreamEventDone}); err != nil {
-			retErr = err
+			retErr = newEngineError(EngineErrorHandler, "stream_handler", err)
 			return nil, retErr
 		}
 	}

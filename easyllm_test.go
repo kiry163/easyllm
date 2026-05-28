@@ -3,6 +3,7 @@ package easyllm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -281,7 +282,7 @@ func TestNewClientAppliesRetryBackoffConfig(t *testing.T) {
 		Provider:       ProviderOpenAICompatible,
 		BaseURL:        server.URL,
 		Model:          "custom-model",
-		MaxAttempts:    2,
+		MaxRetries:     1,
 		InitialBackoff: 40 * time.Millisecond,
 		MaxBackoff:     40 * time.Millisecond,
 	})
@@ -410,6 +411,261 @@ func TestNewClientOpenAICompatibleGenerateStreamResponses(t *testing.T) {
 	}
 	if done == nil || done.ResponseID != "resp_123" || done.Usage.TotalTokens != 5 {
 		t.Fatalf("unexpected done response: %+v", done)
+	}
+}
+
+func TestGenerateStreamReturnsIdleTimeoutWhenStreamStalls(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		close(started)
+		<-release
+	}))
+	defer server.Close()
+	defer close(release)
+
+	client, err := NewClient(Config{
+		Provider:                ProviderOpenAICompatible,
+		BaseURL:                 server.URL,
+		Model:                   "custom-model",
+		StreamFirstEventTimeout: 10 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewClient returned error: %v", err)
+	}
+
+	err = client.GenerateStream(context.Background(), ModelRequest{
+		Input: []InputItem{UserMessageItem{Content: []TextPart{{Text: "hello"}}}},
+	}, nil)
+	if err == nil {
+		t.Fatal("expected stream first event timeout error")
+	}
+	if !errors.Is(err, ErrStreamFirstEventTimeout) {
+		t.Fatalf("expected ErrStreamFirstEventTimeout, got %v", err)
+	}
+	<-started
+}
+
+func TestGenerateStreamRetriesFirstEventTimeoutBeforeEmittingEvents(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		if attempts == 1 {
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+			time.Sleep(50 * time.Millisecond)
+			return
+		}
+		if flusher, ok := w.(http.Flusher); ok {
+			_, _ = w.Write([]byte(strings.Join([]string{
+				`data: {"id":"chatcmpl_123","choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}`,
+				``,
+				`data: [DONE]`,
+				``,
+			}, "\n")))
+			flusher.Flush()
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewClient(Config{
+		Provider:                ProviderOpenAICompatible,
+		BaseURL:                 server.URL,
+		Model:                   "custom-model",
+		StreamFirstEventTimeout: 10 * time.Millisecond,
+		MaxRetries:              1,
+	})
+	if err != nil {
+		t.Fatalf("NewClient returned error: %v", err)
+	}
+
+	var text strings.Builder
+	err = client.GenerateStream(context.Background(), ModelRequest{
+		Input: []InputItem{UserMessageItem{Content: []TextPart{{Text: "hello"}}}},
+	}, func(event StreamEvent) error {
+		if event.Type == StreamEventMessageDelta {
+			text.WriteString(event.Text)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("GenerateStream returned error: %v", err)
+	}
+	if attempts != 2 {
+		t.Fatalf("expected 2 attempts, got %d", attempts)
+	}
+	if text.String() != "ok" {
+		t.Fatalf("unexpected streamed text: %q", text.String())
+	}
+}
+
+func TestGenerateStreamRetriesRequestTimeoutBeforeFirstEvent(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		if attempts == 1 {
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+			time.Sleep(50 * time.Millisecond)
+			return
+		}
+		_, _ = w.Write([]byte(strings.Join([]string{
+			`data: {"id":"chatcmpl_123","choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}`,
+			``,
+			`data: [DONE]`,
+			``,
+		}, "\n")))
+	}))
+	defer server.Close()
+
+	client, err := NewClient(Config{
+		Provider:   ProviderOpenAICompatible,
+		BaseURL:    server.URL,
+		Model:      "custom-model",
+		Timeout:    10 * time.Millisecond,
+		MaxRetries: 1,
+	})
+	if err != nil {
+		t.Fatalf("NewClient returned error: %v", err)
+	}
+
+	var text strings.Builder
+	err = client.GenerateStream(context.Background(), ModelRequest{
+		Input: []InputItem{UserMessageItem{Content: []TextPart{{Text: "hello"}}}},
+	}, func(event StreamEvent) error {
+		if event.Type == StreamEventMessageDelta {
+			text.WriteString(event.Text)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("GenerateStream returned error: %v", err)
+	}
+	if attempts != 2 {
+		t.Fatalf("expected 2 attempts, got %d", attempts)
+	}
+	if text.String() != "ok" {
+		t.Fatalf("unexpected streamed text: %q", text.String())
+	}
+}
+
+func TestGenerateStreamDoesNotApplyFirstEventTimeoutAfterFirstEvent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		flusher, _ := w.(http.Flusher)
+		_, _ = w.Write([]byte("data: {\"id\":\"chatcmpl_123\",\"choices\":[{\"delta\":{\"content\":\"hel\"},\"finish_reason\":\"\"}]}\n\n"))
+		if flusher != nil {
+			flusher.Flush()
+		}
+		time.Sleep(30 * time.Millisecond)
+		_, _ = w.Write([]byte(strings.Join([]string{
+			`data: {"choices":[{"delta":{"content":"lo"},"finish_reason":"stop"}]}`,
+			``,
+			`data: [DONE]`,
+			``,
+		}, "\n")))
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewClient(Config{
+		Provider:                ProviderOpenAICompatible,
+		BaseURL:                 server.URL,
+		Model:                   "custom-model",
+		StreamFirstEventTimeout: 10 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewClient returned error: %v", err)
+	}
+
+	var text strings.Builder
+	err = client.GenerateStream(context.Background(), ModelRequest{
+		Input: []InputItem{UserMessageItem{Content: []TextPart{{Text: "hello"}}}},
+	}, func(event StreamEvent) error {
+		if event.Type == StreamEventMessageDelta {
+			text.WriteString(event.Text)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("GenerateStream returned error: %v", err)
+	}
+	if text.String() != "hello" {
+		t.Fatalf("unexpected streamed text: %q", text.String())
+	}
+}
+
+func TestGenerateStreamDoesNotRetryRequestTimeoutAfterFirstEvent(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("data: {\"id\":\"chatcmpl_123\",\"choices\":[{\"delta\":{\"content\":\"partial\"},\"finish_reason\":\"\"}]}\n\n"))
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		time.Sleep(50 * time.Millisecond)
+	}))
+	defer server.Close()
+
+	client, err := NewClient(Config{
+		Provider:   ProviderOpenAICompatible,
+		BaseURL:    server.URL,
+		Model:      "custom-model",
+		Timeout:    10 * time.Millisecond,
+		MaxRetries: 1,
+	})
+	if err != nil {
+		t.Fatalf("NewClient returned error: %v", err)
+	}
+
+	var text strings.Builder
+	err = client.GenerateStream(context.Background(), ModelRequest{
+		Input: []InputItem{UserMessageItem{Content: []TextPart{{Text: "hello"}}}},
+	}, func(event StreamEvent) error {
+		if event.Type == StreamEventMessageDelta {
+			text.WriteString(event.Text)
+		}
+		return nil
+	})
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	if attempts != 1 {
+		t.Fatalf("expected no retry after first event, got %d attempts", attempts)
+	}
+	if text.String() != "partial" {
+		t.Fatalf("unexpected streamed text: %q", text.String())
 	}
 }
 

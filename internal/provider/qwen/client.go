@@ -51,6 +51,10 @@ func WithTimeout(timeout time.Duration) ProviderOption {
 	return func(p *Provider) { p.options = append(p.options, compat.WithTimeout(timeout)) }
 }
 
+func WithStreamFirstEventTimeout(timeout time.Duration) ProviderOption {
+	return func(p *Provider) { p.options = append(p.options, compat.WithStreamFirstEventTimeout(timeout)) }
+}
+
 func WithExtraBody(extra map[string]any) ProviderOption {
 	return func(p *Provider) { p.extraBody = cloneMap(extra) }
 }

@@ -33,12 +33,13 @@ type Client struct {
 }
 
 type Provider struct {
-	apiKey         string
-	baseURL        string
-	httpClient     *http.Client
-	retry          compat.RetryConfig
-	extraBody      map[string]any
-	defaultOptions map[string]any
+	apiKey                  string
+	baseURL                 string
+	httpClient              *http.Client
+	streamFirstEventTimeout time.Duration
+	retry                   compat.RetryConfig
+	extraBody               map[string]any
+	defaultOptions          map[string]any
 }
 
 type ProviderOption func(*Provider)
@@ -62,8 +63,8 @@ func WithBaseURL(baseURL string) ProviderOption {
 
 func WithRetry(config RetryConfig) ProviderOption {
 	return func(p *Provider) {
-		if config.MaxAttempts > 0 {
-			p.retry.MaxAttempts = config.MaxAttempts
+		if config.MaxRetries > 0 {
+			p.retry.MaxRetries = config.MaxRetries
 		}
 		if config.InitialBackoff > 0 {
 			p.retry.InitialBackoff = config.InitialBackoff
@@ -90,6 +91,14 @@ func WithTimeout(timeout time.Duration) ProviderOption {
 	}
 }
 
+func WithStreamFirstEventTimeout(timeout time.Duration) ProviderOption {
+	return func(p *Provider) {
+		if timeout > 0 {
+			p.streamFirstEventTimeout = timeout
+		}
+	}
+}
+
 func WithExtraBody(extra map[string]any) ProviderOption {
 	return func(p *Provider) {
 		p.extraBody = cloneMap(extra)
@@ -109,7 +118,6 @@ func NewProvider(opts ...ProviderOption) *Provider {
 			Timeout: 30 * time.Second,
 		},
 		retry: compat.RetryConfig{
-			MaxAttempts:    1,
 			InitialBackoff: 100 * time.Millisecond,
 			MaxBackoff:     time.Second,
 		},
@@ -150,6 +158,7 @@ func (p *Provider) modelOptions(config ChatClientConfig) []compat.Option {
 		compat.WithRetry(p.retry),
 		compat.WithExtraBody(p.extraBody),
 		compat.WithDefaultOptions(p.defaultOptions),
+		compat.WithStreamFirstEventTimeout(p.streamFirstEventTimeout),
 	}
 	if config.Temperature != nil {
 		opts = append(opts, compat.WithTemperature(*config.Temperature))

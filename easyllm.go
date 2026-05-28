@@ -49,6 +49,8 @@ type StreamEventType = model.StreamEventType
 type StreamEvent = model.StreamEvent
 type StreamHandler = model.StreamHandler
 
+var ErrStreamFirstEventTimeout = compat.ErrStreamFirstEventTimeout
+
 const (
 	StreamEventMessageDelta = model.StreamEventMessageDelta
 	StreamEventToolStart    = model.StreamEventToolStart
@@ -67,11 +69,12 @@ type Config struct {
 	MaxTokens   *int
 	// EnableThinking is a provider-neutral reasoning switch. Providers map it to
 	// their request-body field when supported.
-	EnableThinking *bool
-	Timeout        time.Duration
-	MaxAttempts    int
-	InitialBackoff time.Duration
-	MaxBackoff     time.Duration
+	EnableThinking          *bool
+	Timeout                 time.Duration
+	StreamFirstEventTimeout time.Duration
+	MaxRetries              int
+	InitialBackoff          time.Duration
+	MaxBackoff              time.Duration
 	// ExtraBody is merged into the final model request body after normalized
 	// fields, so it can override provider-specific request parameters.
 	ExtraBody map[string]any
@@ -143,9 +146,12 @@ func newOpenAIClient(config Config) Client {
 	if config.Timeout > 0 {
 		opts = append(opts, openai.WithTimeout(config.Timeout))
 	}
-	if config.MaxAttempts > 0 {
+	if config.StreamFirstEventTimeout > 0 {
+		opts = append(opts, openai.WithStreamFirstEventTimeout(config.StreamFirstEventTimeout))
+	}
+	if config.MaxRetries > 0 {
 		opts = append(opts, openai.WithRetry(openai.RetryConfig{
-			MaxAttempts:    config.MaxAttempts,
+			MaxRetries:     config.MaxRetries,
 			InitialBackoff: config.InitialBackoff,
 			MaxBackoff:     config.MaxBackoff,
 		}))
@@ -174,9 +180,9 @@ func newOpenAIImageClient(config Config) ImageClient {
 	if config.Timeout > 0 {
 		opts = append(opts, openai.WithTimeout(config.Timeout))
 	}
-	if config.MaxAttempts > 0 {
+	if config.MaxRetries > 0 {
 		opts = append(opts, openai.WithRetry(openai.RetryConfig{
-			MaxAttempts:    config.MaxAttempts,
+			MaxRetries:     config.MaxRetries,
 			InitialBackoff: config.InitialBackoff,
 			MaxBackoff:     config.MaxBackoff,
 		}))
@@ -195,9 +201,12 @@ func newOpenAICompatibleClient(config Config) Client {
 	if config.Timeout > 0 {
 		opts = append(opts, compat.WithTimeout(config.Timeout))
 	}
-	if config.MaxAttempts > 0 {
+	if config.StreamFirstEventTimeout > 0 {
+		opts = append(opts, compat.WithStreamFirstEventTimeout(config.StreamFirstEventTimeout))
+	}
+	if config.MaxRetries > 0 {
 		opts = append(opts, compat.WithRetry(compat.RetryConfig{
-			MaxAttempts:    config.MaxAttempts,
+			MaxRetries:     config.MaxRetries,
 			InitialBackoff: config.InitialBackoff,
 			MaxBackoff:     config.MaxBackoff,
 		}))
@@ -233,9 +242,12 @@ func newQwenClient(config Config) (Client, error) {
 	if config.Timeout > 0 {
 		opts = append(opts, qwen.WithTimeout(config.Timeout))
 	}
-	if config.MaxAttempts > 0 {
+	if config.StreamFirstEventTimeout > 0 {
+		opts = append(opts, qwen.WithStreamFirstEventTimeout(config.StreamFirstEventTimeout))
+	}
+	if config.MaxRetries > 0 {
 		opts = append(opts, qwen.WithRetry(qwen.RetryConfig{
-			MaxAttempts:    config.MaxAttempts,
+			MaxRetries:     config.MaxRetries,
 			InitialBackoff: config.InitialBackoff,
 			MaxBackoff:     config.MaxBackoff,
 		}))
@@ -269,9 +281,12 @@ func newDeepSeekClient(config Config) (Client, error) {
 	if config.Timeout > 0 {
 		opts = append(opts, deepseek.WithTimeout(config.Timeout))
 	}
-	if config.MaxAttempts > 0 {
+	if config.StreamFirstEventTimeout > 0 {
+		opts = append(opts, deepseek.WithStreamFirstEventTimeout(config.StreamFirstEventTimeout))
+	}
+	if config.MaxRetries > 0 {
 		opts = append(opts, deepseek.WithRetry(deepseek.RetryConfig{
-			MaxAttempts:    config.MaxAttempts,
+			MaxRetries:     config.MaxRetries,
 			InitialBackoff: config.InitialBackoff,
 			MaxBackoff:     config.MaxBackoff,
 		}))

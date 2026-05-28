@@ -461,6 +461,66 @@ func TestRunReturnsExecutionErrorWhenModelCallFails(t *testing.T) {
 	if result != nil {
 		t.Fatalf("expected nil result on execution error, got %+v", result)
 	}
+	var engineErr *EngineError
+	if !errors.As(err, &engineErr) {
+		t.Fatalf("expected EngineError, got %T", err)
+	}
+	if engineErr.Kind != EngineErrorModelRequest {
+		t.Fatalf("expected model request error, got %q", engineErr.Kind)
+	}
+}
+
+type contextErrorClient struct{}
+
+func (contextErrorClient) Generate(ctx context.Context, req model.ModelRequest) (*model.ModelResponse, error) {
+	return nil, context.DeadlineExceeded
+}
+
+func (contextErrorClient) GenerateStream(ctx context.Context, req model.ModelRequest, handler model.StreamHandler) error {
+	return context.DeadlineExceeded
+}
+
+func TestRunWrapsTimeoutErrors(t *testing.T) {
+	runtime := NewEngine(contextErrorClient{})
+
+	_, err := runtime.Run(context.Background(), RunRequest{Input: "hello"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var engineErr *EngineError
+	if !errors.As(err, &engineErr) {
+		t.Fatalf("expected EngineError, got %T", err)
+	}
+	if engineErr.Kind != EngineErrorTimeout {
+		t.Fatalf("expected timeout error, got %q", engineErr.Kind)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected wrapped deadline error, got %v", err)
+	}
+}
+
+func TestRunWrapsHookErrors(t *testing.T) {
+	wantErr := errors.New("hook failed")
+	runtime := NewEngine(fakeClient{}, WithHooks(Hooks{
+		OnModelRequest: func(ModelRequestEvent) error {
+			return wantErr
+		},
+	}))
+
+	_, err := runtime.Run(context.Background(), RunRequest{Input: "hello"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var engineErr *EngineError
+	if !errors.As(err, &engineErr) {
+		t.Fatalf("expected EngineError, got %T", err)
+	}
+	if engineErr.Kind != EngineErrorHook {
+		t.Fatalf("expected hook error, got %q", engineErr.Kind)
+	}
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("expected wrapped hook error, got %v", err)
+	}
 }
 
 func TestRunStreamEmitsToolLifecycleAndReturnsResult(t *testing.T) {
@@ -511,6 +571,13 @@ func TestRunStreamStopsWhenHandlerReturnsError(t *testing.T) {
 	})
 	if err == nil || !errors.Is(err, wantErr) {
 		t.Fatalf("expected handler error, got result=%+v err=%v", result, err)
+	}
+	var engineErr *EngineError
+	if !errors.As(err, &engineErr) {
+		t.Fatalf("expected EngineError, got %T", err)
+	}
+	if engineErr.Kind != EngineErrorHandler {
+		t.Fatalf("expected handler error, got %q", engineErr.Kind)
 	}
 	if result != nil {
 		t.Fatalf("expected nil result when handler fails, got %+v", result)

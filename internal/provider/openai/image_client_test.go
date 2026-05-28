@@ -165,7 +165,7 @@ func TestImageClientRetriesServerErrors(t *testing.T) {
 	client := NewProvider(
 		WithAPIKey("token"),
 		WithBaseURL(server.URL),
-		WithRetry(RetryConfig{MaxAttempts: 2}),
+		WithRetry(RetryConfig{MaxRetries: 2}),
 	).ImageClient(ImageClientConfig{Model: "gpt-image-1"})
 
 	resp, err := client.GenerateImage(context.Background(), model.ImageRequest{Prompt: "diagram"})

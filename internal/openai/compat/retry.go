@@ -7,7 +7,7 @@ import (
 )
 
 func (c *Client) shouldRetry(ctx context.Context, attempt int, statusCode int, err error) bool {
-	if attempt >= c.retry.maxAttempts() {
+	if attempt > c.retry.maxRetries() {
 		return false
 	}
 	if err == nil {
@@ -28,11 +28,11 @@ func (c *Client) shouldRetry(ctx context.Context, attempt int, statusCode int, e
 	}
 }
 
-func (r RetryConfig) maxAttempts() int {
-	if r.MaxAttempts <= 0 {
-		return 1
+func (r RetryConfig) maxRetries() int {
+	if r.MaxRetries < 0 {
+		return 0
 	}
-	return r.MaxAttempts
+	return r.MaxRetries
 }
 
 func (r RetryConfig) backoffForAttempt(attempt int) time.Duration {
