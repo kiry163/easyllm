@@ -845,6 +845,7 @@ func TestEngineRunKeepsClientExtraBodyAcrossToolCalls(t *testing.T) {
 				"choices": []map[string]any{
 					{
 						"message": map[string]any{
+							"content": "pre-tool",
 							"tool_calls": []map[string]any{
 								{
 									"id":   "call_1",
@@ -900,6 +901,9 @@ func TestEngineRunKeepsClientExtraBodyAcrossToolCalls(t *testing.T) {
 	}
 	if result.OutputText != "done" {
 		t.Fatalf("unexpected output: %q", result.OutputText)
+	}
+	if result.ToolCallCount != 1 {
+		t.Fatalf("unexpected tool call count: %d", result.ToolCallCount)
 	}
 }
 

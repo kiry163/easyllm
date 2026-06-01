@@ -69,6 +69,9 @@ func (s *Session) MessagesView() []Message {
 			out = append(out, Message{Role: "user", Content: firstText(current.Content)})
 		case model.AssistantMessageItem:
 			out = append(out, Message{Role: "assistant", Content: firstText(current.Content)})
+			for _, call := range current.ToolCalls {
+				out = append(out, Message{Role: "assistant", Content: "", ToolCallID: call.CallID})
+			}
 		case model.ToolResultItem:
 			out = append(out, Message{Role: "tool", Content: current.Content, ToolCallID: current.CallID})
 		}

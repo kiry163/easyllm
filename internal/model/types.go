@@ -40,6 +40,7 @@ type AssistantMessageItem struct {
 	ID            string         `json:"id"`
 	Metadata      map[string]any `json:"metadata"`
 	Content       []TextPart     `json:"content"`
+	ToolCalls     []ToolCallItem `json:"tool_calls"`
 	ProviderState map[string]any `json:"provider_state"`
 }
 
@@ -56,8 +57,6 @@ type ToolCallItem struct {
 	Metadata      map[string]any `json:"metadata"`
 }
 
-func (ToolCallItem) inputItem() {}
-
 type ToolResultItem struct {
 	ID       string         `json:"id"`
 	CallID   string         `json:"call_id"`
@@ -68,13 +67,14 @@ type ToolResultItem struct {
 
 func (ToolResultItem) inputItem() {}
 
-type MessageOutput struct {
-	Role          string         `json:"role"`
-	Content       []TextPart     `json:"content"`
-	ProviderState map[string]any `json:"provider_state"`
+type AssistantOutput struct {
+	Role          string           `json:"role"`
+	Content       []TextPart       `json:"content"`
+	ToolCalls     []ToolCallOutput `json:"tool_calls"`
+	ProviderState map[string]any   `json:"provider_state"`
 }
 
-func (MessageOutput) outputItem() {}
+func (AssistantOutput) outputItem() {}
 
 type ToolCallOutput struct {
 	CallID        string         `json:"call_id"`
@@ -84,8 +84,6 @@ type ToolCallOutput struct {
 	Repaired      bool           `json:"repaired"`
 	ProviderState map[string]any `json:"provider_state"`
 }
-
-func (ToolCallOutput) outputItem() {}
 
 type ToolDefinition struct {
 	Name        string         `json:"name"`

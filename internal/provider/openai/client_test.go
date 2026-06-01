@@ -91,12 +91,67 @@ func TestChatClientRetriesAndNormalizesToolCalls(t *testing.T) {
 	if len(resp.Output) != 1 {
 		t.Fatalf("unexpected output count: %d", len(resp.Output))
 	}
-	call, ok := resp.Output[0].(ToolCallOutput)
+	assistant, ok := resp.Output[0].(AssistantOutput)
 	if !ok {
 		t.Fatalf("unexpected output type: %T", resp.Output[0])
 	}
+	if len(assistant.Content) != 1 || assistant.Content[0].Text != "tool call" {
+		t.Fatalf("unexpected assistant content: %+v", assistant.Content)
+	}
+	if len(assistant.ToolCalls) != 1 {
+		t.Fatalf("unexpected tool call count: %d", len(assistant.ToolCalls))
+	}
+	call := assistant.ToolCalls[0]
 	if call.Name != "submit" || call.Arguments["value"] != "ok" || !call.Repaired {
 		t.Fatalf("unexpected tool call output: %+v", call)
+	}
+}
+
+func TestChatClientPreservesAssistantContentWithToolCalls(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{
+					"message": map[string]any{
+						"content": "thinking",
+						"tool_calls": []map[string]any{
+							{
+								"id":   "call_1",
+								"type": "function",
+								"function": map[string]any{
+									"name":      "submit",
+									"arguments": `{"value":"ok"}`,
+								},
+							},
+						},
+					},
+					"finish_reason": "tool_calls",
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := NewProvider(WithAPIKey("token"), WithBaseURL(server.URL)).ChatClient(ChatClientConfig{})
+	resp, err := client.Generate(context.Background(), ModelRequest{
+		Model: "gpt-test",
+		Input: []InputItem{UserMessageItem{Content: []TextPart{{Text: "hello"}}}},
+	})
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+	if len(resp.Output) != 1 {
+		t.Fatalf("unexpected output count: %d", len(resp.Output))
+	}
+	assistant, ok := resp.Output[0].(AssistantOutput)
+	if !ok {
+		t.Fatalf("unexpected output type: %T", resp.Output[0])
+	}
+	if len(assistant.Content) != 1 || assistant.Content[0].Text != "thinking" {
+		t.Fatalf("unexpected assistant content: %+v", assistant.Content)
+	}
+	if len(assistant.ToolCalls) != 1 || assistant.ToolCalls[0].Name != "submit" {
+		t.Fatalf("unexpected assistant tool calls: %+v", assistant.ToolCalls)
 	}
 }
 
@@ -154,12 +209,12 @@ func TestResponsesClientNormalizesAssistantMessage(t *testing.T) {
 	if len(resp.Output) != 1 {
 		t.Fatalf("unexpected output count: %d", len(resp.Output))
 	}
-	msg, ok := resp.Output[0].(MessageOutput)
+	msg, ok := resp.Output[0].(AssistantOutput)
 	if !ok {
 		t.Fatalf("unexpected output type: %T", resp.Output[0])
 	}
 	if len(msg.Content) != 1 || msg.Content[0].Text != "done" {
-		t.Fatalf("unexpected message output: %+v", msg)
+		t.Fatalf("unexpected assistant output: %+v", msg)
 	}
 	if resp.Usage.CachedInputTokens != 0 {
 		t.Fatalf("unexpected cached input tokens: %+v", resp.Usage)

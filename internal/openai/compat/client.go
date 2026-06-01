@@ -315,19 +315,8 @@ func openAIChatMessages(items []model.InputItem) []map[string]any {
 			out = append(out, map[string]any{"role": "user", "content": textPartsToString(current.Content)})
 		case model.AssistantMessageItem:
 			msg := map[string]any{"role": "assistant", "content": textPartsToString(current.Content)}
-			applyProviderStateToChatMessage(msg, current.ProviderState)
-			out = append(out, msg)
-		case model.ToolCallItem:
-			msg := map[string]any{
-				"role": "assistant",
-				"tool_calls": []map[string]any{{
-					"id":   current.CallID,
-					"type": "function",
-					"function": map[string]any{
-						"name":      current.Name,
-						"arguments": toolArgumentsString(current.Arguments, current.RawArguments),
-					},
-				}},
+			if len(current.ToolCalls) > 0 {
+				msg["tool_calls"] = openAIChatToolCallItems(current.ToolCalls)
 			}
 			applyProviderStateToChatMessage(msg, current.ProviderState)
 			out = append(out, msg)
@@ -338,6 +327,24 @@ func openAIChatMessages(items []model.InputItem) []map[string]any {
 				"tool_call_id": current.CallID,
 			})
 		}
+	}
+	return out
+}
+
+func openAIChatToolCallItems(items []model.ToolCallItem) []map[string]any {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, current := range items {
+		out = append(out, map[string]any{
+			"id":   current.CallID,
+			"type": "function",
+			"function": map[string]any{
+				"name":      current.Name,
+				"arguments": toolArgumentsString(current.Arguments, current.RawArguments),
+			},
+		})
 	}
 	return out
 }
@@ -355,10 +362,11 @@ func openAIResponsesInput(items []model.InputItem) []map[string]any {
 			out = append(out, map[string]any{"role": "user", "content": []map[string]any{{"type": "input_text", "text": textPartsToString(current.Content)}}})
 		case model.AssistantMessageItem:
 			out = append(out, map[string]any{"role": "assistant", "content": []map[string]any{{"type": "output_text", "text": textPartsToString(current.Content)}}})
+			for _, call := range current.ToolCalls {
+				out = append(out, map[string]any{"type": "function_call", "call_id": call.CallID, "name": call.Name, "arguments": toolArgumentsString(call.Arguments, call.RawArguments)})
+			}
 		case model.ToolResultItem:
 			out = append(out, map[string]any{"type": "function_call_output", "call_id": current.CallID, "output": current.Content})
-		case model.ToolCallItem:
-			out = append(out, map[string]any{"type": "function_call", "call_id": current.CallID, "name": current.Name, "arguments": toolArgumentsString(current.Arguments, current.RawArguments)})
 		}
 	}
 	return out
@@ -404,12 +412,19 @@ func parseChatResponse(r io.Reader) (*model.ModelResponse, error) {
 		return out, nil
 	}
 	out.FinishReason = raw.Choices[0].FinishReason
+	assistant := model.AssistantOutput{
+		Role:          "assistant",
+		ProviderState: chatProviderState(raw.Choices[0].Message.ReasoningContent),
+	}
+	if raw.Choices[0].Message.Content != "" {
+		assistant.Content = append(assistant.Content, model.TextPart{Text: raw.Choices[0].Message.Content})
+	}
 	for _, call := range raw.Choices[0].Message.ToolCalls {
 		args, repaired, err := jsonrepair.DecodeJSONObjectString(call.Function.Arguments)
 		if err != nil {
 			args = map[string]any{"raw": call.Function.Arguments}
 		}
-		out.Output = append(out.Output, model.ToolCallOutput{
+		assistant.ToolCalls = append(assistant.ToolCalls, model.ToolCallOutput{
 			CallID:        call.ID,
 			Name:          call.Function.Name,
 			Arguments:     args,
@@ -418,12 +433,8 @@ func parseChatResponse(r io.Reader) (*model.ModelResponse, error) {
 			ProviderState: chatProviderState(raw.Choices[0].Message.ReasoningContent),
 		})
 	}
-	if len(out.Output) == 0 && raw.Choices[0].Message.Content != "" {
-		out.Output = append(out.Output, model.MessageOutput{
-			Role:          "assistant",
-			Content:       []model.TextPart{{Text: raw.Choices[0].Message.Content}},
-			ProviderState: chatProviderState(raw.Choices[0].Message.ReasoningContent),
-		})
+	if len(assistant.Content) > 0 || len(assistant.ToolCalls) > 0 {
+		out.Output = append(out.Output, assistant)
 	}
 	return out, nil
 }
@@ -469,12 +480,15 @@ func parseResponsesResponse(r io.Reader) (*model.ModelResponse, error) {
 			if err != nil {
 				args = map[string]any{"raw": item.Arguments}
 			}
-			out.Output = append(out.Output, model.ToolCallOutput{
-				CallID:       item.CallID,
-				Name:         item.Name,
-				Arguments:    args,
-				RawArguments: item.Arguments,
-				Repaired:     repaired,
+			out.Output = append(out.Output, model.AssistantOutput{
+				Role: "assistant",
+				ToolCalls: []model.ToolCallOutput{{
+					CallID:       item.CallID,
+					Name:         item.Name,
+					Arguments:    args,
+					RawArguments: item.Arguments,
+					Repaired:     repaired,
+				}},
 			})
 		case "message":
 			parts := make([]model.TextPart, 0, len(item.Content))
@@ -483,7 +497,7 @@ func parseResponsesResponse(r io.Reader) (*model.ModelResponse, error) {
 					parts = append(parts, model.TextPart{Text: part.Text})
 				}
 			}
-			out.Output = append(out.Output, model.MessageOutput{Role: item.Role, Content: parts})
+			out.Output = append(out.Output, model.AssistantOutput{Role: item.Role, Content: parts})
 		}
 	}
 	return out, nil

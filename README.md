@@ -402,7 +402,7 @@ func (CustomClient) Generate(ctx context.Context, req easyllm.ModelRequest) (*ea
 	// Call your provider and return provider-neutral output items.
 	return &easyllm.ModelResponse{
 		Output: []easyllm.OutputItem{
-			easyllm.MessageOutput{
+			easyllm.AssistantOutput{
 				Role:    "assistant",
 				Content: []easyllm.TextPart{{Text: "done"}},
 			},

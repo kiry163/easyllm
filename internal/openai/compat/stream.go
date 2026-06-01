@@ -207,6 +207,13 @@ func (c *Client) parseChatStream(handler model.StreamHandler) func(context.Conte
 			return nil, firstEventReceived, err
 		}
 
+		assistant := model.AssistantOutput{
+			Role:          "assistant",
+			ProviderState: chatProviderState(reasoning.String()),
+		}
+		if message.Len() > 0 {
+			assistant.Content = append(assistant.Content, model.TextPart{Text: message.String()})
+		}
 		if len(toolCalls) > 0 {
 			for i := 0; i < len(toolCalls); i++ {
 				current := toolCalls[i]
@@ -218,7 +225,7 @@ func (c *Client) parseChatStream(handler model.StreamHandler) func(context.Conte
 				if err != nil {
 					args = map[string]any{"raw": rawArgs}
 				}
-				resp.Output = append(resp.Output, model.ToolCallOutput{
+				assistant.ToolCalls = append(assistant.ToolCalls, model.ToolCallOutput{
 					CallID:        current.CallID,
 					Name:          current.Name,
 					Arguments:     args,
@@ -227,14 +234,9 @@ func (c *Client) parseChatStream(handler model.StreamHandler) func(context.Conte
 					ProviderState: chatProviderState(reasoning.String()),
 				})
 			}
-			return resp, firstEventReceived, nil
 		}
-		if message.Len() > 0 {
-			resp.Output = append(resp.Output, model.MessageOutput{
-				Role:          "assistant",
-				Content:       []model.TextPart{{Text: message.String()}},
-				ProviderState: chatProviderState(reasoning.String()),
-			})
+		if len(assistant.Content) > 0 || len(assistant.ToolCalls) > 0 {
+			resp.Output = append(resp.Output, assistant)
 		}
 		return resp, firstEventReceived, nil
 	}
@@ -285,7 +287,7 @@ func (c *Client) parseResponsesStream(handler model.StreamHandler) func(context.
 			return resp, firstEventReceived, nil
 		}
 		if message.Len() > 0 {
-			resp.Output = append(resp.Output, model.MessageOutput{
+			resp.Output = append(resp.Output, model.AssistantOutput{
 				Role:    "assistant",
 				Content: []model.TextPart{{Text: message.String()}},
 			})

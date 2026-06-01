@@ -20,7 +20,7 @@ type UserMessageItem = model.UserMessageItem
 type AssistantMessageItem = model.AssistantMessageItem
 type ToolCallItem = model.ToolCallItem
 type ToolResultItem = model.ToolResultItem
-type MessageOutput = model.MessageOutput
+type AssistantOutput = model.AssistantOutput
 type ToolCallOutput = model.ToolCallOutput
 type ToolDefinition = model.ToolDefinition
 

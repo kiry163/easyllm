@@ -28,7 +28,7 @@ func (c echoClient) GenerateStream(ctx context.Context, req easyllm.ModelRequest
 	}
 	if handler != nil {
 		if len(resp.Output) > 0 {
-			if msg, ok := resp.Output[0].(easyllm.MessageOutput); ok && len(msg.Content) > 0 {
+			if msg, ok := resp.Output[0].(easyllm.AssistantOutput); ok && len(msg.Content) > 0 {
 				if err := handler(easyllm.StreamEvent{Type: easyllm.StreamEventMessageDelta, Text: msg.Content[0].Text}); err != nil {
 					return err
 				}
@@ -125,10 +125,15 @@ func (toolCallingClient) Generate(ctx context.Context, req easyllm.ModelRequest)
 	}
 	return &easyllm.ModelResponse{
 		Output: []easyllm.OutputItem{
-			easyllm.ToolCallOutput{
-				CallID:    "call_1",
-				Name:      "submit",
-				Arguments: map[string]any{"value": "ok"},
+			easyllm.AssistantOutput{
+				Role: "assistant",
+				ToolCalls: []easyllm.ToolCallOutput{
+					{
+						CallID:    "call_1",
+						Name:      "submit",
+						Arguments: map[string]any{"value": "ok"},
+					},
+				},
 			},
 		},
 		FinishReason: "tool_calls",
@@ -142,7 +147,7 @@ func (c toolCallingClient) GenerateStream(ctx context.Context, req easyllm.Model
 	}
 	if handler != nil {
 		if len(resp.Output) > 0 {
-			if msg, ok := resp.Output[0].(easyllm.MessageOutput); ok && len(msg.Content) > 0 {
+			if msg, ok := resp.Output[0].(easyllm.AssistantOutput); ok && len(msg.Content) > 0 {
 				if err := handler(easyllm.StreamEvent{Type: easyllm.StreamEventMessageDelta, Text: msg.Content[0].Text}); err != nil {
 					return err
 				}
@@ -231,14 +236,19 @@ func (profileExtractionClient) Generate(ctx context.Context, req easyllm.ModelRe
 	}
 	return &easyllm.ModelResponse{
 		Output: []easyllm.OutputItem{
-			easyllm.ToolCallOutput{
-				CallID: "call_profile_1",
-				Name:   "submit_student_profile",
-				Arguments: map[string]any{
-					"nickname": "小林",
-					"grade":    "五年级",
-					"gender":   "男",
-					"hobbies":  []any{"足球", "机器人", "画画"},
+			easyllm.AssistantOutput{
+				Role: "assistant",
+				ToolCalls: []easyllm.ToolCallOutput{
+					{
+						CallID: "call_profile_1",
+						Name:   "submit_student_profile",
+						Arguments: map[string]any{
+							"nickname": "小林",
+							"grade":    "五年级",
+							"gender":   "男",
+							"hobbies":  []any{"足球", "机器人", "画画"},
+						},
+					},
 				},
 			},
 		},
@@ -253,7 +263,7 @@ func (c profileExtractionClient) GenerateStream(ctx context.Context, req easyllm
 	}
 	if handler != nil {
 		if len(resp.Output) > 0 {
-			if msg, ok := resp.Output[0].(easyllm.MessageOutput); ok && len(msg.Content) > 0 {
+			if msg, ok := resp.Output[0].(easyllm.AssistantOutput); ok && len(msg.Content) > 0 {
 				if err := handler(easyllm.StreamEvent{Type: easyllm.StreamEventMessageDelta, Text: msg.Content[0].Text}); err != nil {
 					return err
 				}
@@ -432,7 +442,7 @@ func Example_newClient() {
 func messageResponse(text string) *easyllm.ModelResponse {
 	return &easyllm.ModelResponse{
 		Output: []easyllm.OutputItem{
-			easyllm.MessageOutput{
+			easyllm.AssistantOutput{
 				Role:    "assistant",
 				Content: []easyllm.TextPart{{Text: text}},
 			},

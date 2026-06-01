@@ -15,7 +15,7 @@ type fakeClient struct{}
 func (fakeClient) Generate(ctx context.Context, req model.ModelRequest) (*model.ModelResponse, error) {
 	return &model.ModelResponse{
 		Output: []model.OutputItem{
-			model.MessageOutput{
+			model.AssistantOutput{
 				Role: "assistant",
 				Content: []model.TextPart{
 					{Text: "done"},
@@ -33,7 +33,7 @@ func (fakeClient) GenerateStream(ctx context.Context, req model.ModelRequest, ha
 	}
 	if handler != nil {
 		if len(resp.Output) > 0 {
-			if msg, ok := resp.Output[0].(model.MessageOutput); ok && len(msg.Content) > 0 {
+			if msg, ok := resp.Output[0].(model.AssistantOutput); ok && len(msg.Content) > 0 {
 				if err := handler(model.StreamEvent{Type: model.StreamEventMessageDelta, Text: msg.Content[0].Text}); err != nil {
 					return err
 				}
@@ -70,10 +70,16 @@ func (c *toolCallingClient) Generate(ctx context.Context, req model.ModelRequest
 	if c.calls == 1 {
 		return &model.ModelResponse{
 			Output: []model.OutputItem{
-				model.ToolCallOutput{
-					CallID:    "call_1",
-					Name:      "submit",
-					Arguments: map[string]any{"value": "ok"},
+				model.AssistantOutput{
+					Role:    "assistant",
+					Content: []model.TextPart{{Text: "checking"}},
+					ToolCalls: []model.ToolCallOutput{
+						{
+							CallID:    "call_1",
+							Name:      "submit",
+							Arguments: map[string]any{"value": "ok"},
+						},
+					},
 				},
 			},
 			FinishReason: "tool_calls",
@@ -81,7 +87,7 @@ func (c *toolCallingClient) Generate(ctx context.Context, req model.ModelRequest
 	}
 	return &model.ModelResponse{
 		Output: []model.OutputItem{
-			model.MessageOutput{
+			model.AssistantOutput{
 				Role:    "assistant",
 				Content: []model.TextPart{{Text: "done"}},
 			},
@@ -97,7 +103,7 @@ func (c *toolCallingClient) GenerateStream(ctx context.Context, req model.ModelR
 	}
 	if handler != nil {
 		if len(resp.Output) > 0 {
-			if msg, ok := resp.Output[0].(model.MessageOutput); ok && len(msg.Content) > 0 {
+			if msg, ok := resp.Output[0].(model.AssistantOutput); ok && len(msg.Content) > 0 {
 				if err := handler(model.StreamEvent{Type: model.StreamEventMessageDelta, Text: msg.Content[0].Text}); err != nil {
 					return err
 				}
@@ -150,8 +156,8 @@ func TestRunCanStopAfterSuccessfulToolCallFromEngineOption(t *testing.T) {
 	if result.StopReason != StopReasonStopOnToolResult {
 		t.Fatalf("unexpected stop reason: %q", result.StopReason)
 	}
-	if result.OutputText != "" {
-		t.Fatalf("expected no model summary after tool call, got %q", result.OutputText)
+	if result.OutputText != "checking" {
+		t.Fatalf("expected pre-tool assistant content, got %q", result.OutputText)
 	}
 }
 
@@ -247,10 +253,15 @@ func (c *usageClient) Generate(ctx context.Context, req model.ModelRequest) (*mo
 	if c.calls == 1 {
 		return &model.ModelResponse{
 			Output: []model.OutputItem{
-				model.ToolCallOutput{
-					CallID:    "call_1",
-					Name:      "submit",
-					Arguments: map[string]any{"value": "ok"},
+				model.AssistantOutput{
+					Role: "assistant",
+					ToolCalls: []model.ToolCallOutput{
+						{
+							CallID:    "call_1",
+							Name:      "submit",
+							Arguments: map[string]any{"value": "ok"},
+						},
+					},
 				},
 			},
 			FinishReason: "tool_calls",
@@ -264,7 +275,7 @@ func (c *usageClient) Generate(ctx context.Context, req model.ModelRequest) (*mo
 	}
 	return &model.ModelResponse{
 		Output: []model.OutputItem{
-			model.MessageOutput{
+			model.AssistantOutput{
 				Role:    "assistant",
 				Content: []model.TextPart{{Text: "done"}},
 			},
@@ -286,7 +297,7 @@ func (c *usageClient) GenerateStream(ctx context.Context, req model.ModelRequest
 	}
 	if handler != nil {
 		if len(resp.Output) > 0 {
-			if msg, ok := resp.Output[0].(model.MessageOutput); ok && len(msg.Content) > 0 {
+			if msg, ok := resp.Output[0].(model.AssistantOutput); ok && len(msg.Content) > 0 {
 				if err := handler(model.StreamEvent{Type: model.StreamEventMessageDelta, Text: msg.Content[0].Text}); err != nil {
 					return err
 				}
@@ -542,20 +553,23 @@ func TestRunStreamEmitsToolLifecycleAndReturnsResult(t *testing.T) {
 	if result.OutputText != "done" {
 		t.Fatalf("unexpected output text: %q", result.OutputText)
 	}
-	if len(events) != 4 {
+	if len(events) != 5 {
 		t.Fatalf("unexpected event count: %d", len(events))
 	}
-	if events[0].Type != StreamEventToolStart || events[0].ToolName != "submit" {
+	if events[0].Type != StreamEventMessageDelta || events[0].Text != "checking" {
 		t.Fatalf("unexpected first event: %+v", events[0])
 	}
-	if events[1].Type != StreamEventToolFinish || events[1].ToolName != "submit" {
+	if events[1].Type != StreamEventToolStart || events[1].ToolName != "submit" {
 		t.Fatalf("unexpected second event: %+v", events[1])
 	}
-	if events[2].Type != StreamEventMessageDelta || events[2].Text != "done" {
+	if events[2].Type != StreamEventToolFinish || events[2].ToolName != "submit" {
 		t.Fatalf("unexpected third event: %+v", events[2])
 	}
-	if events[3].Type != StreamEventDone {
-		t.Fatalf("unexpected final event: %+v", events[3])
+	if events[3].Type != StreamEventMessageDelta || events[3].Text != "done" {
+		t.Fatalf("unexpected fourth event: %+v", events[3])
+	}
+	if events[4].Type != StreamEventDone {
+		t.Fatalf("unexpected final event: %+v", events[4])
 	}
 }
 
