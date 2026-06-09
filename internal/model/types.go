@@ -8,8 +8,36 @@ type Usage struct {
 	Details           map[string]any `json:"details"`
 }
 
-type TextPart struct {
-	Text string `json:"text"`
+type ContentPartType string
+
+const (
+	ContentPartTypeText  ContentPartType = "text"
+	ContentPartTypeImage ContentPartType = "image"
+)
+
+type ImageDetail string
+
+const (
+	ImageDetailAuto ImageDetail = "auto"
+	ImageDetailLow  ImageDetail = "low"
+	ImageDetailHigh ImageDetail = "high"
+)
+
+type ContentPart struct {
+	Type     ContentPartType `json:"type,omitempty"`
+	Text     string          `json:"text,omitempty"`
+	ImageURL string          `json:"image_url,omitempty"`
+	Detail   ImageDetail     `json:"detail,omitempty"`
+}
+
+type TextPart = ContentPart
+
+func NewTextPart(text string) ContentPart {
+	return ContentPart{Type: ContentPartTypeText, Text: text}
+}
+
+func NewImagePart(imageURL string, detail ImageDetail) ContentPart {
+	return ContentPart{Type: ContentPartTypeImage, ImageURL: imageURL, Detail: detail}
 }
 
 type InputItem interface {

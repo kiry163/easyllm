@@ -41,8 +41,15 @@ func NewSession(opts ...SessionOption) *Session {
 }
 
 func (s *Session) AppendUserText(text string) {
+	s.AppendUserContent(model.NewTextPart(text))
+}
+
+func (s *Session) AppendUserContent(parts ...model.ContentPart) {
+	if len(parts) == 0 {
+		return
+	}
 	s.Items = append(s.Items, model.UserMessageItem{
-		Content: []model.TextPart{{Text: text}},
+		Content: append([]model.ContentPart(nil), parts...),
 	})
 }
 

@@ -155,6 +155,64 @@ func TestChatClientPreservesAssistantContentWithToolCalls(t *testing.T) {
 	}
 }
 
+func TestChatClientRendersMultimodalUserInput(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		messages, ok := body["messages"].([]any)
+		if !ok || len(messages) != 1 {
+			t.Fatalf("unexpected messages: %#v", body["messages"])
+		}
+		message, ok := messages[0].(map[string]any)
+		if !ok {
+			t.Fatalf("unexpected message: %#v", messages[0])
+		}
+		content, ok := message["content"].([]any)
+		if !ok || len(content) != 2 {
+			t.Fatalf("unexpected content: %#v", message["content"])
+		}
+		text, ok := content[0].(map[string]any)
+		if !ok || text["type"] != "text" || text["text"] != "describe this image" {
+			t.Fatalf("unexpected text part: %#v", content[0])
+		}
+		image, ok := content[1].(map[string]any)
+		if !ok || image["type"] != "image_url" {
+			t.Fatalf("unexpected image part: %#v", content[1])
+		}
+		imageURL, ok := image["image_url"].(map[string]any)
+		if !ok || imageURL["url"] != "data:image/png;base64,aGVsbG8=" || imageURL["detail"] != "low" {
+			t.Fatalf("unexpected image_url payload: %#v", image["image_url"])
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{
+					"message":       map[string]any{"content": "done"},
+					"finish_reason": "stop",
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := NewProvider(WithAPIKey("token"), WithBaseURL(server.URL)).ChatClient(ChatClientConfig{})
+	_, err := client.Generate(context.Background(), ModelRequest{
+		Model: "gpt-test",
+		Input: []InputItem{
+			UserMessageItem{
+				Content: []TextPart{
+					{Text: "describe this image"},
+					{Type: ContentPartTypeImage, ImageURL: "data:image/png;base64,aGVsbG8=", Detail: ImageDetailLow},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+}
+
 func TestResponsesClientNormalizesAssistantMessage(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/responses" {
@@ -221,6 +279,64 @@ func TestResponsesClientNormalizesAssistantMessage(t *testing.T) {
 	}
 	if resp.Usage.Details != nil {
 		t.Fatalf("unexpected usage details: %+v", resp.Usage.Details)
+	}
+}
+
+func TestResponsesClientRendersMultimodalUserInput(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		input, ok := body["input"].([]any)
+		if !ok || len(input) != 1 {
+			t.Fatalf("unexpected input: %#v", body["input"])
+		}
+		message, ok := input[0].(map[string]any)
+		if !ok {
+			t.Fatalf("unexpected message: %#v", input[0])
+		}
+		content, ok := message["content"].([]any)
+		if !ok || len(content) != 2 {
+			t.Fatalf("unexpected content: %#v", message["content"])
+		}
+		text, ok := content[0].(map[string]any)
+		if !ok || text["type"] != "input_text" || text["text"] != "describe this image" {
+			t.Fatalf("unexpected text part: %#v", content[0])
+		}
+		image, ok := content[1].(map[string]any)
+		if !ok || image["type"] != "input_image" || image["image_url"] != "https://example.com/cat.png" || image["detail"] != "high" {
+			t.Fatalf("unexpected image part: %#v", content[1])
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id": "resp_123",
+			"output": []map[string]any{
+				{
+					"type": "message",
+					"role": "assistant",
+					"content": []map[string]any{
+						{"type": "output_text", "text": "done"},
+					},
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := NewProvider(WithAPIKey("token"), WithBaseURL(server.URL)).ResponsesClient(ResponsesClientConfig{})
+	_, err := client.Generate(context.Background(), ModelRequest{
+		Model: "gpt-test",
+		Input: []InputItem{
+			UserMessageItem{
+				Content: []TextPart{
+					{Text: "describe this image"},
+					{Type: ContentPartTypeImage, ImageURL: "https://example.com/cat.png", Detail: ImageDetailHigh},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
 	}
 }
 

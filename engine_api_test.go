@@ -61,6 +61,107 @@ func TestNewRunAppendsInputAndReturnsOutput(t *testing.T) {
 	}
 }
 
+type captureClient struct {
+	requests []model.ModelRequest
+}
+
+func (c *captureClient) Generate(ctx context.Context, req model.ModelRequest) (*model.ModelResponse, error) {
+	c.requests = append(c.requests, req)
+	return fakeClient{}.Generate(ctx, req)
+}
+
+func (c *captureClient) GenerateStream(ctx context.Context, req model.ModelRequest, handler model.StreamHandler) error {
+	c.requests = append(c.requests, req)
+	return fakeClient{}.GenerateStream(ctx, req, handler)
+}
+
+func TestRunAppendsMultimodalInputParts(t *testing.T) {
+	client := &captureClient{}
+	runtime := NewEngine(client)
+
+	_, err := runtime.Run(context.Background(), RunRequest{
+		InputParts: []ContentPart{
+			NewTextPart("describe this image"),
+			NewImagePart("https://example.com/cat.png", ImageDetailLow),
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if len(client.requests) != 1 {
+		t.Fatalf("unexpected request count: %d", len(client.requests))
+	}
+	if len(client.requests[0].Input) != 1 {
+		t.Fatalf("unexpected input count: %d", len(client.requests[0].Input))
+	}
+	user, ok := client.requests[0].Input[0].(model.UserMessageItem)
+	if !ok {
+		t.Fatalf("unexpected input type: %T", client.requests[0].Input[0])
+	}
+	if len(user.Content) != 2 {
+		t.Fatalf("unexpected content parts: %+v", user.Content)
+	}
+	if user.Content[0].Text != "describe this image" || user.Content[1].ImageURL != "https://example.com/cat.png" || user.Content[1].Detail != model.ImageDetailLow {
+		t.Fatalf("unexpected content: %+v", user.Content)
+	}
+}
+
+func TestRunRejectsInputAndInputPartsTogether(t *testing.T) {
+	client := &captureClient{}
+	runtime := NewEngine(client)
+
+	result, err := runtime.Run(context.Background(), RunRequest{
+		Input: "hello",
+		InputParts: []ContentPart{
+			NewImagePart("https://example.com/cat.png", ImageDetailAuto),
+		},
+	})
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	if result != nil {
+		t.Fatalf("expected nil result, got %+v", result)
+	}
+	if len(client.requests) != 0 {
+		t.Fatalf("expected no model requests, got %d", len(client.requests))
+	}
+	var engineErr *EngineError
+	if !errors.As(err, &engineErr) {
+		t.Fatalf("expected EngineError, got %T", err)
+	}
+	if engineErr.Kind != EngineErrorInvalidRequest {
+		t.Fatalf("expected invalid request error, got %q", engineErr.Kind)
+	}
+}
+
+func TestRunStreamRejectsInputAndInputPartsTogether(t *testing.T) {
+	client := &captureClient{}
+	runtime := NewEngine(client)
+
+	result, err := runtime.RunStream(context.Background(), RunRequest{
+		Input: "hello",
+		InputParts: []ContentPart{
+			NewImagePart("https://example.com/cat.png", ImageDetailAuto),
+		},
+	}, nil)
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	if result != nil {
+		t.Fatalf("expected nil result, got %+v", result)
+	}
+	if len(client.requests) != 0 {
+		t.Fatalf("expected no model requests, got %d", len(client.requests))
+	}
+	var engineErr *EngineError
+	if !errors.As(err, &engineErr) {
+		t.Fatalf("expected EngineError, got %T", err)
+	}
+	if engineErr.Kind != EngineErrorInvalidRequest {
+		t.Fatalf("expected invalid request error, got %q", engineErr.Kind)
+	}
+}
+
 type toolCallingClient struct {
 	calls int
 }

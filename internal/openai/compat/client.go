@@ -312,7 +312,7 @@ func openAIChatMessages(items []model.InputItem) []map[string]any {
 		case model.SystemMessageItem:
 			out = append(out, map[string]any{"role": "system", "content": textPartsToString(current.Content)})
 		case model.UserMessageItem:
-			out = append(out, map[string]any{"role": "user", "content": textPartsToString(current.Content)})
+			out = append(out, map[string]any{"role": "user", "content": openAIChatContent(current.Content)})
 		case model.AssistantMessageItem:
 			msg := map[string]any{"role": "assistant", "content": textPartsToString(current.Content)}
 			if len(current.ToolCalls) > 0 {
@@ -359,7 +359,7 @@ func openAIResponsesInput(items []model.InputItem) []map[string]any {
 		case model.SystemMessageItem:
 			out = append(out, map[string]any{"role": "system", "content": []map[string]any{{"type": "input_text", "text": textPartsToString(current.Content)}}})
 		case model.UserMessageItem:
-			out = append(out, map[string]any{"role": "user", "content": []map[string]any{{"type": "input_text", "text": textPartsToString(current.Content)}}})
+			out = append(out, map[string]any{"role": "user", "content": openAIResponsesInputContent(current.Content)})
 		case model.AssistantMessageItem:
 			out = append(out, map[string]any{"role": "assistant", "content": []map[string]any{{"type": "output_text", "text": textPartsToString(current.Content)}}})
 			for _, call := range current.ToolCalls {
@@ -370,6 +370,89 @@ func openAIResponsesInput(items []model.InputItem) []map[string]any {
 		}
 	}
 	return out
+}
+
+func openAIChatContent(parts []model.ContentPart) any {
+	if !hasNonTextPart(parts) {
+		return textPartsToString(parts)
+	}
+	content := make([]map[string]any, 0, len(parts))
+	for _, part := range parts {
+		switch contentPartType(part) {
+		case model.ContentPartTypeImage:
+			if part.ImageURL == "" {
+				continue
+			}
+			imageURL := map[string]any{"url": part.ImageURL}
+			if part.Detail != "" {
+				imageURL["detail"] = string(part.Detail)
+			}
+			content = append(content, map[string]any{
+				"type":      "image_url",
+				"image_url": imageURL,
+			})
+		default:
+			if part.Text == "" {
+				continue
+			}
+			content = append(content, map[string]any{
+				"type": "text",
+				"text": part.Text,
+			})
+		}
+	}
+	return content
+}
+
+func openAIResponsesInputContent(parts []model.ContentPart) []map[string]any {
+	content := make([]map[string]any, 0, len(parts))
+	for _, part := range parts {
+		switch contentPartType(part) {
+		case model.ContentPartTypeImage:
+			if part.ImageURL == "" {
+				continue
+			}
+			image := map[string]any{
+				"type":      "input_image",
+				"image_url": part.ImageURL,
+			}
+			if part.Detail != "" {
+				image["detail"] = string(part.Detail)
+			}
+			content = append(content, image)
+		default:
+			if part.Text == "" {
+				continue
+			}
+			content = append(content, map[string]any{
+				"type": "input_text",
+				"text": part.Text,
+			})
+		}
+	}
+	if len(content) == 0 {
+		return []map[string]any{{"type": "input_text", "text": ""}}
+	}
+	return content
+}
+
+func contentPartType(part model.ContentPart) model.ContentPartType {
+	if part.Type != "" {
+		return part.Type
+	}
+	if part.ImageURL != "" {
+		return model.ContentPartTypeImage
+	}
+	return model.ContentPartTypeText
+}
+
+func hasNonTextPart(parts []model.ContentPart) bool {
+	for _, part := range parts {
+		if contentPartType(part) != model.ContentPartTypeText {
+			return true
+		}
+	}
+	return false
 }
 
 func parseChatResponse(r io.Reader) (*model.ModelResponse, error) {

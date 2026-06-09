@@ -186,6 +186,40 @@ easyllm.Engine.Run
   -> easyllm.Client.Generate
 ```
 
+### Multimodal Input
+
+Use `InputParts` when a user message needs text plus image resources. Image URLs may be remote URLs or provider-supported data URLs.
+`Input` and `InputParts` are mutually exclusive; when using images, include the text prompt as a text part.
+
+```go
+result, err := engine.Run(ctx, easyllm.RunRequest{
+	InputParts: []easyllm.ContentPart{
+		easyllm.NewTextPart("Describe this image."),
+		easyllm.NewImagePart("https://example.com/cat.png", easyllm.ImageDetailAuto),
+	},
+})
+if err != nil {
+	panic(err)
+}
+
+fmt.Println(result.OutputText)
+```
+
+For direct model calls, pass the same parts through `UserMessageItem.Content`:
+
+```go
+resp, err := client.Generate(ctx, easyllm.ModelRequest{
+	Input: []easyllm.InputItem{
+		easyllm.UserMessageItem{
+			Content: []easyllm.ContentPart{
+				easyllm.NewTextPart("What is in this image?"),
+				easyllm.NewImagePart("data:image/png;base64,...", easyllm.ImageDetailLow),
+			},
+		},
+	},
+})
+```
+
 ## Streaming
 
 Use `GenerateStream(...)` for a single streaming model call and `RunStream(...)` when you want the engine to keep handling sessions and tool calls.

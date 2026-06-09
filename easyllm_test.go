@@ -42,6 +42,17 @@ func TestNewImageClientBuildsOpenAIImageClient(t *testing.T) {
 	}
 }
 
+func TestContentPartConstructors(t *testing.T) {
+	text := NewTextPart("hello")
+	if text.Type != ContentPartTypeText || text.Text != "hello" {
+		t.Fatalf("unexpected text part: %+v", text)
+	}
+	image := NewImagePart("https://example.com/cat.png", ImageDetailHigh)
+	if image.Type != ContentPartTypeImage || image.ImageURL != "https://example.com/cat.png" || image.Detail != ImageDetailHigh {
+		t.Fatalf("unexpected image part: %+v", image)
+	}
+}
+
 func TestNewImageClientRejectsUnsupportedProvider(t *testing.T) {
 	_, err := NewImageClient(Config{
 		Provider: ProviderDeepSeek,

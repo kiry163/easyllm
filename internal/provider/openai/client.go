@@ -14,6 +14,9 @@ type ModelResponse = model.ModelResponse
 type InputItem = model.InputItem
 type OutputItem = model.OutputItem
 type Usage = model.Usage
+type ContentPart = model.ContentPart
+type ContentPartType = model.ContentPartType
+type ImageDetail = model.ImageDetail
 type TextPart = model.TextPart
 type SystemMessageItem = model.SystemMessageItem
 type UserMessageItem = model.UserMessageItem
@@ -25,6 +28,14 @@ type ToolCallOutput = model.ToolCallOutput
 type ToolDefinition = model.ToolDefinition
 
 type RetryConfig = compat.RetryConfig
+
+const (
+	ContentPartTypeText  = model.ContentPartTypeText
+	ContentPartTypeImage = model.ContentPartTypeImage
+	ImageDetailAuto      = model.ImageDetailAuto
+	ImageDetailLow       = model.ImageDetailLow
+	ImageDetailHigh      = model.ImageDetailHigh
+)
 
 const DefaultBaseURL = "https://api.openai.com/v1"
 

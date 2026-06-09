@@ -37,6 +37,9 @@ type GeneratedImage = model.GeneratedImage
 type InputItem = model.InputItem
 type OutputItem = model.OutputItem
 type Usage = model.Usage
+type ContentPart = model.ContentPart
+type ContentPartType = model.ContentPartType
+type ImageDetail = model.ImageDetail
 type TextPart = model.TextPart
 type SystemMessageItem = model.SystemMessageItem
 type UserMessageItem = model.UserMessageItem
@@ -50,6 +53,22 @@ type StreamEvent = model.StreamEvent
 type StreamHandler = model.StreamHandler
 
 var ErrStreamFirstEventTimeout = compat.ErrStreamFirstEventTimeout
+
+func NewTextPart(text string) ContentPart {
+	return model.NewTextPart(text)
+}
+
+func NewImagePart(imageURL string, detail ImageDetail) ContentPart {
+	return model.NewImagePart(imageURL, detail)
+}
+
+const (
+	ContentPartTypeText  = model.ContentPartTypeText
+	ContentPartTypeImage = model.ContentPartTypeImage
+	ImageDetailAuto      = model.ImageDetailAuto
+	ImageDetailLow       = model.ImageDetailLow
+	ImageDetailHigh      = model.ImageDetailHigh
+)
 
 const (
 	StreamEventMessageDelta = model.StreamEventMessageDelta
