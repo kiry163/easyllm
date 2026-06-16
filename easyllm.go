@@ -30,6 +30,8 @@ type Client interface {
 
 type ModelRequest = model.ModelRequest
 type ModelResponse = model.ModelResponse
+type ModelInfo = model.ModelInfo
+type ListModelsResponse = model.ListModelsResponse
 type ImageClient = model.ImageClient
 type ImageRequest = model.ImageRequest
 type ImageResponse = model.ImageResponse
@@ -133,6 +135,13 @@ func NewImageClient(config Config) (ImageClient, error) {
 	}
 }
 
+func ListModels(ctx context.Context, config Config) (*ListModelsResponse, error) {
+	if err := validateListModelsConfig(config); err != nil {
+		return nil, err
+	}
+	return newModelListClient(config).ListModels(ctx)
+}
+
 func validateConfig(config Config) error {
 	if strings.TrimSpace(config.Provider) == "" {
 		return fmt.Errorf("provider is required")
@@ -150,6 +159,24 @@ func validateConfig(config Config) error {
 	case TransportChat, TransportResponses:
 	default:
 		return fmt.Errorf("unsupported transport %q", config.Transport)
+	}
+	return nil
+}
+
+func validateListModelsConfig(config Config) error {
+	if strings.TrimSpace(config.Provider) == "" {
+		return fmt.Errorf("provider is required")
+	}
+	if strings.TrimSpace(config.APIKey) == "" && config.Provider != ProviderOpenAICompatible {
+		return fmt.Errorf("api key is required")
+	}
+	if config.Provider == ProviderOpenAICompatible && strings.TrimSpace(config.BaseURL) == "" {
+		return fmt.Errorf("base url is required for provider %q", ProviderOpenAICompatible)
+	}
+	switch config.Provider {
+	case ProviderOpenAI, ProviderOpenAICompatible, ProviderQwen, ProviderDeepSeek:
+	default:
+		return fmt.Errorf("unsupported provider %q", config.Provider)
 	}
 	return nil
 }
@@ -186,6 +213,41 @@ func newOpenAIClient(config Config) Client {
 		return p.ResponsesClient(openai.ResponsesClientConfig(clientConfig))
 	}
 	return p.ChatClient(clientConfig)
+}
+
+func newModelListClient(config Config) *compat.Client {
+	baseURL := config.BaseURL
+	provider := config.Provider
+	switch config.Provider {
+	case ProviderOpenAI:
+		if baseURL == "" {
+			baseURL = openai.DefaultBaseURL
+		}
+	case ProviderQwen:
+		if baseURL == "" {
+			baseURL = qwen.DefaultBaseURL
+		}
+	case ProviderDeepSeek:
+		if baseURL == "" {
+			baseURL = deepseek.DefaultBaseURL
+		}
+	case ProviderOpenAICompatible:
+		provider = ProviderOpenAICompatible
+	}
+	opts := []compat.Option{
+		compat.WithProviderName(provider),
+	}
+	if config.Timeout > 0 {
+		opts = append(opts, compat.WithTimeout(config.Timeout))
+	}
+	if config.MaxRetries > 0 {
+		opts = append(opts, compat.WithRetry(compat.RetryConfig{
+			MaxRetries:     config.MaxRetries,
+			InitialBackoff: config.InitialBackoff,
+			MaxBackoff:     config.MaxBackoff,
+		}))
+	}
+	return compat.NewChatClient(config.APIKey, baseURL, opts...)
 }
 
 func newOpenAIImageClient(config Config) ImageClient {

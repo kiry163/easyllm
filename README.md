@@ -74,6 +74,22 @@ Supported provider constants:
 
 OpenAI, Qwen, and DeepSeek use built-in default base URLs. Set `BaseURL` when you need a custom endpoint.
 
+Use `ListModels(...)` to fetch the provider's remote `/models` list. This call does not require `Config.Model`.
+
+```go
+models, err := easyllm.ListModels(ctx, easyllm.Config{
+	Provider: easyllm.ProviderOpenAI,
+	APIKey:   os.Getenv("OPENAI_API_KEY"),
+})
+if err != nil {
+	panic(err)
+}
+
+for _, model := range models.Models {
+	fmt.Println(model.ID)
+}
+```
+
 Common model request fields live directly on `Config`:
 
 ```go
@@ -397,7 +413,7 @@ Stable stop reason constants:
 - `easyllm.StopReasonStopOnToolResult`
 - `easyllm.StopReasonModelCallLimitExceeded`
 
-`RunResult` includes the final output text, model-call count, tool-call count, tool results, a session snapshot, and usage for the current run.
+`RunResult` includes the final output text, model-call count, tool-call count, network retry count, tool results, a session snapshot, and usage for the current run. `RetryCount` counts provider-level network retries and does not include the first request attempt.
 
 ```go
 type Usage struct {

@@ -76,6 +76,9 @@ func TestChatClientRetriesAndNormalizesToolCalls(t *testing.T) {
 	if attempts != 2 {
 		t.Fatalf("expected 2 attempts, got %d", attempts)
 	}
+	if resp.RetryCount != 1 {
+		t.Fatalf("expected retry count 1, got %d", resp.RetryCount)
+	}
 	if resp.FinishReason != "tool_calls" {
 		t.Fatalf("unexpected finish reason: %q", resp.FinishReason)
 	}

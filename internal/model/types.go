@@ -134,5 +134,6 @@ type ModelResponse struct {
 	Usage        Usage        `json:"usage"`
 	ResponseID   string       `json:"response_id"`
 	Provider     string       `json:"provider"`
+	RetryCount   int          `json:"retry_count"`
 	Raw          any          `json:"raw"`
 }

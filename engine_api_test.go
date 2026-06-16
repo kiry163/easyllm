@@ -372,6 +372,7 @@ func (c *usageClient) Generate(ctx context.Context, req model.ModelRequest) (*mo
 				TotalTokens:       13,
 				CachedInputTokens: 4,
 			},
+			RetryCount: 1,
 		}, nil
 	}
 	return &model.ModelResponse{
@@ -388,6 +389,7 @@ func (c *usageClient) Generate(ctx context.Context, req model.ModelRequest) (*mo
 			TotalTokens:       10,
 			CachedInputTokens: 1,
 		},
+		RetryCount: 2,
 	}, nil
 }
 
@@ -476,6 +478,44 @@ func TestRunAggregatesUsageAcrossModelCalls(t *testing.T) {
 	}
 }
 
+func TestRunAggregatesRetryCountAcrossModelCalls(t *testing.T) {
+	runTool, err := NewTool[submitArgs](submitTool{})
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+	runtime := NewEngine(
+		&usageClient{},
+		WithTools(runTool),
+	)
+
+	result, err := runtime.Run(context.Background(), RunRequest{Input: "submit"})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if result.RetryCount != 3 {
+		t.Fatalf("unexpected retry count: %d", result.RetryCount)
+	}
+}
+
+func TestRunStreamAggregatesRetryCountAcrossModelCalls(t *testing.T) {
+	runTool, err := NewTool[submitArgs](submitTool{})
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+	runtime := NewEngine(
+		&usageClient{},
+		WithTools(runTool),
+	)
+
+	result, err := runtime.RunStream(context.Background(), RunRequest{Input: "submit"}, nil)
+	if err != nil {
+		t.Fatalf("RunStream returned error: %v", err)
+	}
+	if result.RetryCount != 3 {
+		t.Fatalf("unexpected retry count: %d", result.RetryCount)
+	}
+}
+
 func TestRunCopiesUsageOntoSessionSnapshot(t *testing.T) {
 	runTool, err := NewTool[submitArgs](submitTool{})
 	if err != nil {
@@ -525,6 +565,7 @@ func TestRunResultJSONUsesStableFieldNames(t *testing.T) {
 		`"tool_call_count"`,
 		`"tool_results"`,
 		`"stop_reason"`,
+		`"retry_count"`,
 		`"last_response"`,
 		`"finish_reason"`,
 		`"response_id"`,

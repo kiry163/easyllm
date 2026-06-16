@@ -111,6 +111,7 @@ func (c *Client) doStream(ctx context.Context, payload []byte, path string, pars
 			return nil, closeErr
 		}
 		out.Provider = c.providerName
+		out.RetryCount = attempt - 1
 		return out, nil
 	}
 	return nil, lastErr

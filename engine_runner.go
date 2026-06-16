@@ -30,6 +30,7 @@ type RunResult struct {
 	ToolResults    []ToolCallResult `json:"tool_results"`
 	StopReason     StopReason       `json:"stop_reason"`
 	Usage          model.Usage      `json:"usage"`
+	RetryCount     int              `json:"retry_count"`
 }
 
 type ToolCallResult struct {
@@ -103,6 +104,7 @@ func run(ctx context.Context, client Client, session *Session, metadata map[stri
 		session.LastResponse = resp
 		addUsage(&session.Usage, resp.Usage)
 		addUsage(&result.Usage, resp.Usage)
+		result.RetryCount += resp.RetryCount
 
 		session.AppendItems(outputItemsToInputItems(resp.Output)...)
 		if cfg.hooks.OnModelResponse != nil {
@@ -317,6 +319,7 @@ func runStream(ctx context.Context, client Client, session *Session, metadata ma
 		session.LastResponse = resp
 		addUsage(&session.Usage, resp.Usage)
 		addUsage(&result.Usage, resp.Usage)
+		result.RetryCount += resp.RetryCount
 		session.AppendItems(outputItemsToInputItems(resp.Output)...)
 
 		if cfg.hooks.OnModelResponse != nil {

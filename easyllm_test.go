@@ -132,6 +132,64 @@ func TestNewImageClientUsesExtraBodyAndRequestOptions(t *testing.T) {
 	}
 }
 
+func TestListModelsUsesRemoteModelsEndpoint(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+		if r.URL.Path != "/models" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer token" {
+			t.Fatalf("unexpected authorization header: %q", got)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"object": "list",
+			"data": []map[string]any{
+				{
+					"id":       "gpt-4.1-mini",
+					"object":   "model",
+					"created":  1710000000,
+					"owned_by": "openai",
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	resp, err := ListModels(context.Background(), Config{
+		Provider: ProviderOpenAICompatible,
+		BaseURL:  server.URL,
+		APIKey:   "token",
+	})
+	if err != nil {
+		t.Fatalf("ListModels returned error: %v", err)
+	}
+	if resp.Provider != ProviderOpenAICompatible {
+		t.Fatalf("unexpected provider: %q", resp.Provider)
+	}
+	if len(resp.Models) != 1 {
+		t.Fatalf("unexpected model count: %d", len(resp.Models))
+	}
+	model := resp.Models[0]
+	if model.ID != "gpt-4.1-mini" || model.Object != "model" || model.Created != 1710000000 || model.OwnedBy != "openai" || model.Provider != ProviderOpenAICompatible {
+		t.Fatalf("unexpected model: %+v", model)
+	}
+	if model.Raw["id"] != "gpt-4.1-mini" {
+		t.Fatalf("expected raw model payload, got %+v", model.Raw)
+	}
+}
+
+func TestListModelsRejectsMissingProvider(t *testing.T) {
+	_, err := ListModels(context.Background(), Config{})
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	if got := err.Error(); got != "provider is required" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestNewClientBuildsOpenAICompatibleClient(t *testing.T) {
 	client, err := NewClient(Config{
 		Provider: ProviderOpenAICompatible,

@@ -265,6 +265,7 @@ func (c *Client) do(ctx context.Context, payload []byte, path string, parse func
 		} else {
 			out.Provider = c.providerName
 		}
+		out.RetryCount = attempt - 1
 		return out, nil
 	}
 	return nil, lastErr
