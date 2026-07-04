@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	jsonrepair "github.com/RealAlexandreAI/json-repair"
+	"github.com/kiry163/jsonrepair"
 )
 
 type decodeCandidate struct {
