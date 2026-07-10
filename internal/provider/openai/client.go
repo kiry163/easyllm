@@ -47,6 +47,7 @@ type Provider struct {
 	apiKey                  string
 	baseURL                 string
 	httpClient              *http.Client
+	httpDoer                model.HTTPDoer
 	streamFirstEventTimeout time.Duration
 	retry                   compat.RetryConfig
 	extraBody               map[string]any
@@ -90,6 +91,14 @@ func WithHTTPClient(client *http.Client) ProviderOption {
 	return func(p *Provider) {
 		if client != nil {
 			p.httpClient = client
+		}
+	}
+}
+
+func WithHTTPDoer(doer model.HTTPDoer) ProviderOption {
+	return func(p *Provider) {
+		if doer != nil {
+			p.httpDoer = doer
 		}
 	}
 }
@@ -153,6 +162,13 @@ func (p *Provider) ResponsesClient(config ResponsesClientConfig) *Client {
 	return &Client{inner: compat.NewResponsesClient(p.apiKey, p.baseURL, opts...)}
 }
 
+func (p *Provider) resolvedHTTPDoer() model.HTTPDoer {
+	if p.httpDoer != nil {
+		return p.httpDoer
+	}
+	return p.httpClient
+}
+
 func (c *Client) Generate(ctx context.Context, req ModelRequest) (*ModelResponse, error) {
 	return c.inner.Generate(ctx, req)
 }
@@ -165,7 +181,7 @@ func (p *Provider) modelOptions(config ChatClientConfig) []compat.Option {
 	opts := []compat.Option{
 		compat.WithProviderName("openai"),
 		compat.WithDefaultModel(config.Model),
-		compat.WithHTTPClient(p.httpClient),
+		compat.WithHTTPDoer(p.resolvedHTTPDoer()),
 		compat.WithRetry(p.retry),
 		compat.WithExtraBody(p.extraBody),
 		compat.WithDefaultOptions(p.defaultOptions),

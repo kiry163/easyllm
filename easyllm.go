@@ -96,6 +96,9 @@ type Config struct {
 	MaxRetries              int
 	InitialBackoff          time.Duration
 	MaxBackoff              time.Duration
+	// HTTPMiddleware wraps the HTTP executor used for provider requests.
+	// Work before calling the wrapped HTTPDoer is not counted toward Timeout.
+	HTTPMiddleware HTTPMiddleware
 	// ExtraBody is merged into the final model request body after normalized
 	// fields, so it can override provider-specific request parameters.
 	ExtraBody map[string]any
@@ -107,16 +110,20 @@ func NewClient(config Config) (Client, error) {
 	if err := validateConfig(config); err != nil {
 		return nil, err
 	}
+	doer, err := newHTTPDoer(config)
+	if err != nil {
+		return nil, err
+	}
 
 	switch config.Provider {
 	case ProviderOpenAI:
-		return newOpenAIClient(config), nil
+		return newOpenAIClient(config, doer), nil
 	case ProviderOpenAICompatible:
-		return newOpenAICompatibleClient(config), nil
+		return newOpenAICompatibleClient(config, doer), nil
 	case ProviderQwen:
-		return newQwenClient(config)
+		return newQwenClient(config, doer)
 	case ProviderDeepSeek:
-		return newDeepSeekClient(config)
+		return newDeepSeekClient(config, doer)
 	default:
 		return nil, fmt.Errorf("unsupported provider %q", config.Provider)
 	}
@@ -129,7 +136,11 @@ func NewImageClient(config Config) (ImageClient, error) {
 
 	switch config.Provider {
 	case ProviderOpenAI:
-		return newOpenAIImageClient(config), nil
+		doer, err := newHTTPDoer(config)
+		if err != nil {
+			return nil, err
+		}
+		return newOpenAIImageClient(config, doer), nil
 	default:
 		return nil, fmt.Errorf("provider %q does not support image generation", config.Provider)
 	}
@@ -139,7 +150,11 @@ func ListModels(ctx context.Context, config Config) (*ListModelsResponse, error)
 	if err := validateListModelsConfig(config); err != nil {
 		return nil, err
 	}
-	return newModelListClient(config).ListModels(ctx)
+	doer, err := newHTTPDoer(config)
+	if err != nil {
+		return nil, err
+	}
+	return newModelListClient(config, doer).ListModels(ctx)
 }
 
 func validateConfig(config Config) error {
@@ -154,6 +169,11 @@ func validateConfig(config Config) error {
 	}
 	if strings.TrimSpace(config.Model) == "" {
 		return fmt.Errorf("model is required")
+	}
+	switch config.Provider {
+	case ProviderOpenAI, ProviderOpenAICompatible, ProviderQwen, ProviderDeepSeek:
+	default:
+		return fmt.Errorf("unsupported provider %q", config.Provider)
 	}
 	switch transportOrDefault(config.Transport) {
 	case TransportChat, TransportResponses:
@@ -181,16 +201,14 @@ func validateListModelsConfig(config Config) error {
 	return nil
 }
 
-func newOpenAIClient(config Config) Client {
+func newOpenAIClient(config Config, doer HTTPDoer) Client {
 	opts := []openai.ProviderOption{
 		openai.WithAPIKey(config.APIKey),
 		openai.WithExtraBody(configExtraBody(config)),
+		openai.WithHTTPDoer(doer),
 	}
 	if config.BaseURL != "" {
 		opts = append(opts, openai.WithBaseURL(config.BaseURL))
-	}
-	if config.Timeout > 0 {
-		opts = append(opts, openai.WithTimeout(config.Timeout))
 	}
 	if config.StreamFirstEventTimeout > 0 {
 		opts = append(opts, openai.WithStreamFirstEventTimeout(config.StreamFirstEventTimeout))
@@ -215,7 +233,7 @@ func newOpenAIClient(config Config) Client {
 	return p.ChatClient(clientConfig)
 }
 
-func newModelListClient(config Config) *compat.Client {
+func newModelListClient(config Config, doer HTTPDoer) *compat.Client {
 	baseURL := config.BaseURL
 	provider := config.Provider
 	switch config.Provider {
@@ -236,9 +254,7 @@ func newModelListClient(config Config) *compat.Client {
 	}
 	opts := []compat.Option{
 		compat.WithProviderName(provider),
-	}
-	if config.Timeout > 0 {
-		opts = append(opts, compat.WithTimeout(config.Timeout))
+		compat.WithHTTPDoer(doer),
 	}
 	if config.MaxRetries > 0 {
 		opts = append(opts, compat.WithRetry(compat.RetryConfig{
@@ -250,16 +266,14 @@ func newModelListClient(config Config) *compat.Client {
 	return compat.NewChatClient(config.APIKey, baseURL, opts...)
 }
 
-func newOpenAIImageClient(config Config) ImageClient {
+func newOpenAIImageClient(config Config, doer HTTPDoer) ImageClient {
 	opts := []openai.ProviderOption{
 		openai.WithAPIKey(config.APIKey),
 		openai.WithExtraBody(configExtraBody(config)),
+		openai.WithHTTPDoer(doer),
 	}
 	if config.BaseURL != "" {
 		opts = append(opts, openai.WithBaseURL(config.BaseURL))
-	}
-	if config.Timeout > 0 {
-		opts = append(opts, openai.WithTimeout(config.Timeout))
 	}
 	if config.MaxRetries > 0 {
 		opts = append(opts, openai.WithRetry(openai.RetryConfig{
@@ -273,14 +287,12 @@ func newOpenAIImageClient(config Config) ImageClient {
 	})
 }
 
-func newOpenAICompatibleClient(config Config) Client {
+func newOpenAICompatibleClient(config Config, doer HTTPDoer) Client {
 	opts := []compat.Option{
 		compat.WithProviderName(ProviderOpenAICompatible),
 		compat.WithDefaultModel(config.Model),
 		compat.WithExtraBody(configExtraBody(config)),
-	}
-	if config.Timeout > 0 {
-		opts = append(opts, compat.WithTimeout(config.Timeout))
+		compat.WithHTTPDoer(doer),
 	}
 	if config.StreamFirstEventTimeout > 0 {
 		opts = append(opts, compat.WithStreamFirstEventTimeout(config.StreamFirstEventTimeout))
@@ -307,7 +319,7 @@ func newOpenAICompatibleClient(config Config) Client {
 	return compat.NewChatClient(config.APIKey, config.BaseURL, opts...)
 }
 
-func newQwenClient(config Config) (Client, error) {
+func newQwenClient(config Config, doer HTTPDoer) (Client, error) {
 	thinking, err := configEnableThinking(config)
 	if err != nil {
 		return nil, err
@@ -316,12 +328,10 @@ func newQwenClient(config Config) (Client, error) {
 	opts := []qwen.ProviderOption{
 		qwen.WithAPIKey(config.APIKey),
 		qwen.WithExtraBody(configExtraBody(config)),
+		qwen.WithHTTPDoer(doer),
 	}
 	if config.BaseURL != "" {
 		opts = append(opts, qwen.WithBaseURL(config.BaseURL))
-	}
-	if config.Timeout > 0 {
-		opts = append(opts, qwen.WithTimeout(config.Timeout))
 	}
 	if config.StreamFirstEventTimeout > 0 {
 		opts = append(opts, qwen.WithStreamFirstEventTimeout(config.StreamFirstEventTimeout))
@@ -347,7 +357,7 @@ func newQwenClient(config Config) (Client, error) {
 	return p.ChatClient(clientConfig), nil
 }
 
-func newDeepSeekClient(config Config) (Client, error) {
+func newDeepSeekClient(config Config, doer HTTPDoer) (Client, error) {
 	if transportOrDefault(config.Transport) == TransportResponses {
 		return nil, fmt.Errorf("provider %q does not support transport %q", config.Provider, TransportResponses)
 	}
@@ -355,12 +365,10 @@ func newDeepSeekClient(config Config) (Client, error) {
 	opts := []deepseek.ProviderOption{
 		deepseek.WithAPIKey(config.APIKey),
 		deepseek.WithExtraBody(configExtraBody(config)),
+		deepseek.WithHTTPDoer(doer),
 	}
 	if config.BaseURL != "" {
 		opts = append(opts, deepseek.WithBaseURL(config.BaseURL))
-	}
-	if config.Timeout > 0 {
-		opts = append(opts, deepseek.WithTimeout(config.Timeout))
 	}
 	if config.StreamFirstEventTimeout > 0 {
 		opts = append(opts, deepseek.WithStreamFirstEventTimeout(config.StreamFirstEventTimeout))

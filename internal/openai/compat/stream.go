@@ -78,7 +78,7 @@ func (c *Client) doStream(ctx context.Context, payload []byte, path string, pars
 		if c.apiKey != "" {
 			httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
 		}
-		resp, err := c.httpClient.Do(httpReq)
+		resp, err := c.httpDoer.Do(httpReq)
 		if err != nil {
 			cancel()
 			lastErr = err

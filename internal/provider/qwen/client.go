@@ -47,6 +47,10 @@ func WithHTTPClient(client *http.Client) ProviderOption {
 	return func(p *Provider) { p.options = append(p.options, compat.WithHTTPClient(client)) }
 }
 
+func WithHTTPDoer(doer model.HTTPDoer) ProviderOption {
+	return func(p *Provider) { p.options = append(p.options, compat.WithHTTPDoer(doer)) }
+}
+
 func WithTimeout(timeout time.Duration) ProviderOption {
 	return func(p *Provider) { p.options = append(p.options, compat.WithTimeout(timeout)) }
 }

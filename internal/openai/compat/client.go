@@ -36,6 +36,7 @@ type Client struct {
 	defaultModel            string
 	providerName            string
 	httpClient              *http.Client
+	httpDoer                model.HTTPDoer
 	streamFirstEventTimeout time.Duration
 	retry                   RetryConfig
 	transport               Transport
@@ -63,6 +64,14 @@ func WithHTTPClient(client *http.Client) Option {
 	return func(c *Client) {
 		if client != nil {
 			c.httpClient = client
+		}
+	}
+}
+
+func WithHTTPDoer(doer model.HTTPDoer) Option {
+	return func(c *Client) {
+		if doer != nil {
+			c.httpDoer = doer
 		}
 	}
 }
@@ -164,6 +173,9 @@ func newClient(apiKey, baseURL string, transport Transport, opts ...Option) *Cli
 			opt(client)
 		}
 	}
+	if client.httpDoer == nil {
+		client.httpDoer = client.httpClient
+	}
 	return client
 }
 
@@ -238,7 +250,7 @@ func (c *Client) do(ctx context.Context, payload []byte, path string, parse func
 		if c.apiKey != "" {
 			httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
 		}
-		resp, err := c.httpClient.Do(httpReq)
+		resp, err := c.httpDoer.Do(httpReq)
 		if err != nil {
 			lastErr = err
 			if !c.shouldRetry(ctx, attempt, 0, err) {

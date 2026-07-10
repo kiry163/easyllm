@@ -18,22 +18,22 @@ type ImageClientConfig struct {
 }
 
 type ImageClient struct {
-	apiKey     string
-	baseURL    string
-	httpClient *http.Client
-	retry      RetryConfig
-	extraBody  map[string]any
-	model      string
+	apiKey    string
+	baseURL   string
+	httpDoer  model.HTTPDoer
+	retry     RetryConfig
+	extraBody map[string]any
+	model     string
 }
 
 func (p *Provider) ImageClient(config ImageClientConfig) model.ImageClient {
 	return &ImageClient{
-		apiKey:     p.apiKey,
-		baseURL:    p.baseURL,
-		httpClient: p.httpClient,
-		retry:      p.retry,
-		extraBody:  cloneMap(p.extraBody),
-		model:      config.Model,
+		apiKey:    p.apiKey,
+		baseURL:   p.baseURL,
+		httpDoer:  p.resolvedHTTPDoer(),
+		retry:     p.retry,
+		extraBody: cloneMap(p.extraBody),
+		model:     config.Model,
 	}
 }
 
@@ -132,7 +132,7 @@ func (c *ImageClient) do(ctx context.Context, payload []byte) (*http.Response, e
 			httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
 		}
 
-		resp, err := c.httpClient.Do(httpReq)
+		resp, err := c.httpDoer.Do(httpReq)
 		if err != nil {
 			lastErr = err
 			if !shouldRetryImageRequest(ctx, c.retry, attempt, 0, err) {

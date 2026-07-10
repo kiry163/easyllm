@@ -177,6 +177,37 @@ client, err := easyllm.NewClient(easyllm.Config{
 
 When DeepSeek returns tool calls in thinking mode, `easyllm` preserves the provider-required continuation state across the tool loop automatically. That replay stays internal to the provider adapter rather than becoming part of the public API.
 
+## HTTP Middleware
+
+Use `HTTPMiddleware` to wrap every built-in provider HTTP attempt. Middleware applies to ordinary and streaming model calls, image generation, model listing, and retries.
+
+```go
+type doerFunc func(*http.Request) (*http.Response, error)
+
+func (f doerFunc) Do(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+middleware := func(next easyllm.HTTPDoer) easyllm.HTTPDoer {
+	return doerFunc(func(req *http.Request) (*http.Response, error) {
+		// Wait, trace, or audit before the real HTTP request starts.
+		return next.Do(req)
+	})
+}
+
+client, err := easyllm.NewClient(easyllm.Config{
+	Provider:       easyllm.ProviderOpenAI,
+	APIKey:         os.Getenv("OPENAI_API_KEY"),
+	Model:          "gpt-4.1-mini",
+	Timeout:        30 * time.Second,
+	HTTPMiddleware: middleware,
+})
+```
+
+Work performed before `next.Do` is outside `Config.Timeout`, but remains subject to the request context. `Config.Timeout` starts when the wrapped easyllm HTTP client begins the real request and continues through response-body reading.
+
+For streaming or concurrency tracking, wrap `resp.Body` and finish bookkeeping when the body reaches EOF or is closed. Middleware must be safe for concurrent use and must call the supplied `next.Do` to preserve easyllm's timeout and connection reuse.
+
 ## Engine
 
 An `Engine` is the runtime layer around a model client. It owns instructions, tools, hooks, model-call limits, and the tool-calling loop.

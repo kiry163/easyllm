@@ -20,7 +20,7 @@ func (c *Client) ListModels(ctx context.Context) (*model.ListModelsResponse, err
 		if c.apiKey != "" {
 			httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
 		}
-		resp, err := c.httpClient.Do(httpReq)
+		resp, err := c.httpDoer.Do(httpReq)
 		if err != nil {
 			lastErr = err
 			if !c.shouldRetry(ctx, attempt, 0, err) {
