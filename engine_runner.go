@@ -12,6 +12,7 @@ type runConfig struct {
 	hooks             Hooks
 	maxModelCalls     int
 	stopAfterToolCall bool
+	requestItems      []model.InputItem
 }
 
 type StopReason string
@@ -79,11 +80,7 @@ func run(ctx context.Context, client Client, session *Session, metadata map[stri
 	}
 
 	for iteration := 1; iteration <= cfg.maxModelCalls; iteration++ {
-		modelReq := ModelRequest{
-			Input:    session.ItemsView(),
-			Tools:    definitionsFromTools(cfg.tools),
-			Metadata: cloneMap(metadata),
-		}
+		modelReq := buildModelRequest(session, metadata, cfg)
 		if cfg.hooks.OnModelRequest != nil {
 			if err := cfg.hooks.OnModelRequest(ModelRequestEvent{
 				Session:  session.Snapshot(),
@@ -267,11 +264,7 @@ func runStream(ctx context.Context, client Client, session *Session, metadata ma
 	}
 
 	for iteration := 1; iteration <= cfg.maxModelCalls; iteration++ {
-		modelReq := ModelRequest{
-			Input:    session.ItemsView(),
-			Tools:    definitionsFromTools(cfg.tools),
-			Metadata: cloneMap(metadata),
-		}
+		modelReq := buildModelRequest(session, metadata, cfg)
 		if cfg.hooks.OnModelRequest != nil {
 			if err := cfg.hooks.OnModelRequest(ModelRequestEvent{
 				Session:  session.Snapshot(),
@@ -476,6 +469,32 @@ func runStream(ctx context.Context, client Client, session *Session, metadata ma
 	}
 	retResult = result
 	return retResult, nil
+}
+
+func buildModelRequest(session *Session, metadata map[string]any, cfg runConfig) ModelRequest {
+	return ModelRequest{
+		Input:    inputWithRequestItems(session.ItemsView(), cfg.requestItems),
+		Tools:    definitionsFromTools(cfg.tools),
+		Metadata: cloneMap(metadata),
+	}
+}
+
+func inputWithRequestItems(items, requestItems []model.InputItem) []model.InputItem {
+	if len(requestItems) == 0 {
+		return items
+	}
+	systemCount := 0
+	for systemCount < len(items) {
+		if _, ok := items[systemCount].(model.SystemMessageItem); !ok {
+			break
+		}
+		systemCount++
+	}
+	out := make([]model.InputItem, 0, len(items)+len(requestItems))
+	out = append(out, items[:systemCount]...)
+	out = append(out, requestItems...)
+	out = append(out, items[systemCount:]...)
+	return out
 }
 
 func outputItemsToInputItems(items []model.OutputItem) []model.InputItem {

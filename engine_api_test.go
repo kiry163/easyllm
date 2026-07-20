@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kiry163/easyllm/internal/model"
 )
@@ -163,11 +164,13 @@ func TestRunStreamRejectsInputAndInputPartsTogether(t *testing.T) {
 }
 
 type toolCallingClient struct {
-	calls int
+	calls    int
+	requests []model.ModelRequest
 }
 
 func (c *toolCallingClient) Generate(ctx context.Context, req model.ModelRequest) (*model.ModelResponse, error) {
 	c.calls++
+	c.requests = append(c.requests, req)
 	if c.calls == 1 {
 		return &model.ModelResponse{
 			Output: []model.OutputItem{
@@ -195,6 +198,152 @@ func (c *toolCallingClient) Generate(ctx context.Context, req model.ModelRequest
 		},
 		FinishReason: "stop",
 	}, nil
+}
+
+func TestRunInjectsCurrentTimeWithoutPersistingIt(t *testing.T) {
+	client := &captureClient{}
+	location := time.FixedZone("Asia/Shanghai", 8*60*60)
+	fixed := time.Date(2026, time.July, 20, 7, 30, 45, 0, time.UTC)
+	var hookRequest ModelRequest
+	runtime := NewEngine(
+		client,
+		WithInstructions("be helpful"),
+		WithCurrentTime(CurrentTimeConfig{Location: location}),
+		WithHooks(Hooks{
+			OnModelRequest: func(event ModelRequestEvent) error {
+				hookRequest = event.Request
+				return nil
+			},
+		}),
+	)
+	runtime.currentTime.now = func() time.Time { return fixed }
+
+	result, err := runtime.Run(context.Background(), RunRequest{Input: "hello"})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if len(client.requests) != 1 {
+		t.Fatalf("unexpected request count: %d", len(client.requests))
+	}
+	request := client.requests[0]
+	if len(request.Input) != 3 {
+		t.Fatalf("unexpected input count: %d", len(request.Input))
+	}
+	first, ok := request.Input[0].(model.SystemMessageItem)
+	if !ok || firstText(first.Content) != "be helpful" {
+		t.Fatalf("unexpected instructions item: %#v", request.Input[0])
+	}
+	current, ok := request.Input[1].(model.SystemMessageItem)
+	if !ok {
+		t.Fatalf("unexpected current time item: %T", request.Input[1])
+	}
+	want := "Current date and time: 2026-07-20T15:30:45+08:00 (Asia/Shanghai)."
+	if got := firstText(current.Content); got != want {
+		t.Fatalf("unexpected current time: %q", got)
+	}
+	if len(hookRequest.Input) != len(request.Input) {
+		t.Fatalf("hook did not receive final model request: %+v", hookRequest.Input)
+	}
+	for _, item := range result.Session.Items {
+		if system, ok := item.(model.SystemMessageItem); ok && firstText(system.Content) == want {
+			t.Fatal("current time was persisted in the session")
+		}
+	}
+}
+
+func TestRunUsesOneCurrentTimeAcrossToolLoop(t *testing.T) {
+	runTool, err := NewTool[submitArgs](submitTool{})
+	if err != nil {
+		t.Fatalf("NewTool returned error: %v", err)
+	}
+	client := &toolCallingClient{}
+	nowCalls := 0
+	runtime := NewEngine(
+		client,
+		WithTools(runTool),
+		WithCurrentTime(CurrentTimeConfig{}),
+	)
+	runtime.currentTime.now = func() time.Time {
+		nowCalls++
+		return time.Date(2026, time.July, 20, 7, 30, nowCalls, 0, time.UTC)
+	}
+
+	_, err = runtime.Run(context.Background(), RunRequest{Input: "submit"})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if nowCalls != 1 {
+		t.Fatalf("expected one clock read, got %d", nowCalls)
+	}
+	if len(client.requests) != 2 {
+		t.Fatalf("expected two model requests, got %d", len(client.requests))
+	}
+	first := firstText(client.requests[0].Input[0].(model.SystemMessageItem).Content)
+	second := firstText(client.requests[1].Input[0].(model.SystemMessageItem).Content)
+	if first != second {
+		t.Fatalf("tool loop used different times: %q and %q", first, second)
+	}
+}
+
+func TestRunRefreshesCurrentTimeWhenReusingSession(t *testing.T) {
+	client := &captureClient{}
+	runtime := NewEngine(client, WithCurrentTime(CurrentTimeConfig{}))
+	nowCalls := 0
+	runtime.currentTime.now = func() time.Time {
+		nowCalls++
+		return time.Date(2026, time.July, 20, 7, 30, nowCalls, 0, time.UTC)
+	}
+	session := NewSession()
+
+	_, err := runtime.Run(context.Background(), RunRequest{Session: session, Input: "first"})
+	if err != nil {
+		t.Fatalf("first Run returned error: %v", err)
+	}
+	_, err = runtime.Run(context.Background(), RunRequest{Session: session, Input: "second"})
+	if err != nil {
+		t.Fatalf("second Run returned error: %v", err)
+	}
+	if nowCalls != 2 {
+		t.Fatalf("expected one clock read per run, got %d", nowCalls)
+	}
+	first := firstText(client.requests[0].Input[0].(model.SystemMessageItem).Content)
+	second := firstText(client.requests[1].Input[0].(model.SystemMessageItem).Content)
+	if first == second {
+		t.Fatalf("reused session did not refresh current time: %q", first)
+	}
+	for _, item := range session.Items {
+		if _, ok := item.(model.SystemMessageItem); ok {
+			t.Fatalf("current time was persisted in reused session: %+v", session.Items)
+		}
+	}
+}
+
+func TestRunStreamInjectsCurrentTimeWithRequestLocationOverride(t *testing.T) {
+	client := &captureClient{}
+	runtime := NewEngine(client, WithCurrentTime(CurrentTimeConfig{}))
+	runtime.currentTime.now = func() time.Time {
+		return time.Date(2026, time.July, 20, 7, 30, 45, 0, time.UTC)
+	}
+	location := time.FixedZone("Asia/Shanghai", 8*60*60)
+
+	_, err := runtime.RunStream(context.Background(), RunRequest{
+		Input:               "hello",
+		CurrentTimeLocation: location,
+	}, nil)
+	if err != nil {
+		t.Fatalf("RunStream returned error: %v", err)
+	}
+	if len(client.requests) != 1 {
+		t.Fatalf("unexpected request count: %d", len(client.requests))
+	}
+	current, ok := client.requests[0].Input[0].(model.SystemMessageItem)
+	if !ok {
+		t.Fatalf("unexpected current time item: %T", client.requests[0].Input[0])
+	}
+	want := "Current date and time: 2026-07-20T15:30:45+08:00 (Asia/Shanghai)."
+	if got := firstText(current.Content); got != want {
+		t.Fatalf("unexpected current time: %q", got)
+	}
 }
 
 func (c *toolCallingClient) GenerateStream(ctx context.Context, req model.ModelRequest, handler model.StreamHandler) error {

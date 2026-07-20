@@ -3,6 +3,7 @@ package easyllm
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/kiry163/easyllm/internal/model"
 )
@@ -14,6 +15,18 @@ type Engine struct {
 	hooks             Hooks
 	maxModelCalls     int
 	stopAfterToolCall bool
+	currentTime       *currentTimeRuntime
+}
+
+// CurrentTimeConfig controls the time context injected by an Engine.
+type CurrentTimeConfig struct {
+	// Location controls the injected time zone. A nil location uses UTC.
+	Location *time.Location
+}
+
+type currentTimeRuntime struct {
+	location *time.Location
+	now      func() time.Time
 }
 
 type RunRequest struct {
@@ -21,6 +34,8 @@ type RunRequest struct {
 	Input      string
 	InputParts []model.ContentPart
 	Metadata   map[string]any
+	// CurrentTimeLocation overrides the engine's configured location for this run.
+	CurrentTimeLocation *time.Location
 }
 
 type EngineOption func(*Engine)
@@ -54,6 +69,20 @@ func WithMaxModelCalls(n int) EngineOption {
 func WithStopAfterToolCall(stop bool) EngineOption {
 	return func(e *Engine) {
 		e.stopAfterToolCall = stop
+	}
+}
+
+// WithCurrentTime enables current-time injection for Run and RunStream calls.
+func WithCurrentTime(config CurrentTimeConfig) EngineOption {
+	return func(e *Engine) {
+		location := config.Location
+		if location == nil {
+			location = time.UTC
+		}
+		e.currentTime = &currentTimeRuntime{
+			location: location,
+			now:      time.Now,
+		}
 	}
 }
 
@@ -94,6 +123,7 @@ func (e *Engine) Run(ctx context.Context, req RunRequest) (*RunResult, error) {
 		hooks:             e.hooks,
 		maxModelCalls:     e.maxModelCalls,
 		stopAfterToolCall: e.stopAfterToolCall,
+		requestItems:      e.currentTimeItems(req.CurrentTimeLocation),
 	})
 }
 
@@ -121,7 +151,25 @@ func (e *Engine) RunStream(ctx context.Context, req RunRequest, handler StreamHa
 		hooks:             e.hooks,
 		maxModelCalls:     e.maxModelCalls,
 		stopAfterToolCall: e.stopAfterToolCall,
+		requestItems:      e.currentTimeItems(req.CurrentTimeLocation),
 	})
+}
+
+func (e *Engine) currentTimeItems(override *time.Location) []model.InputItem {
+	if e.currentTime == nil {
+		return nil
+	}
+	location := override
+	if location == nil {
+		location = e.currentTime.location
+	}
+	current := e.currentTime.now().In(location)
+	text := fmt.Sprintf("Current date and time: %s (%s).", current.Format(time.RFC3339), location.String())
+	return []model.InputItem{
+		model.SystemMessageItem{
+			Content: []model.TextPart{model.NewTextPart(text)},
+		},
+	}
 }
 
 func validateRunRequest(req RunRequest) error {

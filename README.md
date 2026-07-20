@@ -224,6 +224,46 @@ result, err := engine.Run(ctx, easyllm.RunRequest{
 })
 ```
 
+### Current Time
+
+Enable current-time injection when the model needs an explicit clock. This
+feature applies only to `Engine.Run(...)` and `Engine.RunStream(...)`; direct
+`Client.Generate(...)` calls are unchanged.
+
+```go
+location, err := time.LoadLocation("Asia/Shanghai")
+if err != nil {
+	panic(err)
+}
+
+engine := easyllm.NewEngine(
+	client,
+	easyllm.WithCurrentTime(easyllm.CurrentTimeConfig{
+		Location: location,
+	}),
+)
+```
+
+The engine reads the clock once at the start of each run and injects a temporary
+system message such as
+`Current date and time: 2026-07-20T15:30:45+08:00 (Asia/Shanghai).` Every model
+call in the same tool loop sees that same time. A later run reads the clock
+again, including when it reuses the same session.
+
+The injected message is included in `OnModelRequest`, but it is not stored in
+`Session.Items` or session snapshots. Current-time injection is disabled unless
+`WithCurrentTime(...)` is supplied. A nil configured location uses UTC.
+
+For applications serving users in different time zones, override the engine
+location for an individual run:
+
+```go
+result, err := engine.Run(ctx, easyllm.RunRequest{
+	Input:               "How long until the end of today?",
+	CurrentTimeLocation: userLocation,
+})
+```
+
 `Run(...)` may perform multiple model calls when tools are involved:
 
 ```text
