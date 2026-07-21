@@ -395,7 +395,7 @@ Phase one supports OpenAI image generation only and returns `b64_json` image pay
 
 ## Tool Calling
 
-Tools are strongly typed with Go structs. Field names default to `json` tags when present, then snake_case Go field names. Use the `tool` tag for descriptions, required fields, enums, and validation constraints.
+Tools are strongly typed with Go structs. JSON field names follow `encoding/json`: use a `json` tag for a stable model-facing name, otherwise the Go field name is used. Use the `tool` tag only for descriptions, required fields, enums, and validation constraints.
 
 ```go
 type WeatherArgs struct {
@@ -431,7 +431,7 @@ func (w WeatherTool) Run(ctx context.Context, call easyllm.ToolCallContext, args
 
 weatherTool, err := easyllm.NewTool[WeatherArgs](WeatherTool{
 	service: weatherService,
-})
+}, easyllm.WithUnknownArguments(easyllm.UnknownArgumentsWarn))
 if err != nil {
 	panic(err)
 }
@@ -442,7 +442,9 @@ engine := easyllm.NewEngine(
 )
 ```
 
-Tool arguments include JSON repair for common malformed payloads, including string-wrapped JSON and fenced JSON blocks. Tool errors are returned to the model as structured tool results and are also recorded in `RunResult.ToolResults`.
+Tool arguments are collected as raw provider strings and repaired once the registered tool's Go type is known. Unknown arguments are rejected by default; tools can choose `UnknownArgumentsWarn` or `UnknownArgumentsIgnore`. Warning details, the original arguments, and the selected repair strategy are available from `ToolCallContext`. Tool errors are returned to the model as structured tool results and are also recorded in `RunResult.ToolResults`.
+
+When upgrading, move any `tool:"name=..."` field name to the field's `json` tag. Custom `Tool` implementations now receive raw arguments through `ToolCallContext.RawArguments`, so `Tool.Invoke` no longer accepts a separate argument map. `ToolCallOutput` and `ToolCallItem` likewise expose `RawArguments` instead of parsed `Arguments` or `Repaired` fields.
 
 ## Sessions
 

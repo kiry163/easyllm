@@ -179,9 +179,9 @@ func (c *toolCallingClient) Generate(ctx context.Context, req model.ModelRequest
 					Content: []model.TextPart{{Text: "checking"}},
 					ToolCalls: []model.ToolCallOutput{
 						{
-							CallID:    "call_1",
-							Name:      "submit",
-							Arguments: map[string]any{"value": "ok"},
+							CallID:       "call_1",
+							Name:         "submit",
+							RawArguments: `{"value":"ok"}`,
 						},
 					},
 				},
@@ -367,7 +367,7 @@ func (c *toolCallingClient) GenerateStream(ctx context.Context, req model.ModelR
 }
 
 type submitArgs struct {
-	Value string `tool:"name=value,required"`
+	Value string `json:"value" tool:"required"`
 }
 
 type submitTool struct{}
@@ -382,6 +382,87 @@ func (submitTool) Description() string {
 
 func (submitTool) Run(ctx context.Context, call ToolCallContext, args submitArgs) (ToolResult, error) {
 	return ToolResult{Message: "submitted"}, nil
+}
+
+type capturingSubmitTool struct {
+	value    string
+	repaired bool
+}
+
+func (*capturingSubmitTool) Name() string        { return "submit" }
+func (*capturingSubmitTool) Description() string { return "submit payload" }
+
+func (t *capturingSubmitTool) Run(ctx context.Context, call ToolCallContext, args submitArgs) (ToolResult, error) {
+	t.value = args.Value
+	t.repaired = call.Repaired
+	return ToolResult{Message: "submitted"}, nil
+}
+
+type rawToolCallingClient struct{}
+
+func (rawToolCallingClient) Generate(ctx context.Context, req model.ModelRequest) (*model.ModelResponse, error) {
+	return rawToolCallResponse(), nil
+}
+
+func (rawToolCallingClient) GenerateStream(ctx context.Context, req model.ModelRequest, handler model.StreamHandler) error {
+	if handler != nil {
+		return handler(model.StreamEvent{Type: model.StreamEventDone, Raw: rawToolCallResponse()})
+	}
+	return nil
+}
+
+func rawToolCallResponse() *model.ModelResponse {
+	return &model.ModelResponse{
+		Output: []model.OutputItem{
+			model.AssistantOutput{
+				Role: "assistant",
+				ToolCalls: []model.ToolCallOutput{{
+					CallID:       "call_raw",
+					Name:         "submit",
+					RawArguments: `{"value":"content includes "quoted" text"}`,
+				}},
+			},
+		},
+		FinishReason: "tool_calls",
+	}
+}
+
+func TestEnginePassesRawArgumentsToTypedRepair(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(*Engine) error
+	}{
+		{
+			name: "non-streaming",
+			run: func(engine *Engine) error {
+				_, err := engine.Run(context.Background(), RunRequest{Input: "submit"})
+				return err
+			},
+		},
+		{
+			name: "streaming",
+			run: func(engine *Engine) error {
+				_, err := engine.RunStream(context.Background(), RunRequest{Input: "submit"}, nil)
+				return err
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := &capturingSubmitTool{}
+			tool, err := NewTool[submitArgs](runner)
+			if err != nil {
+				t.Fatalf("NewTool returned error: %v", err)
+			}
+			engine := NewEngine(rawToolCallingClient{}, WithTools(tool), WithStopAfterToolCall(true))
+			if err := tt.run(engine); err != nil {
+				t.Fatalf("run returned error: %v", err)
+			}
+			if runner.value != `content includes "quoted" text` || !runner.repaired {
+				t.Fatalf("unexpected typed repair: value=%q repaired=%v", runner.value, runner.repaired)
+			}
+		})
+	}
 }
 
 func TestRunCanStopAfterSuccessfulToolCallFromEngineOption(t *testing.T) {
@@ -507,9 +588,9 @@ func (c *usageClient) Generate(ctx context.Context, req model.ModelRequest) (*mo
 					Role: "assistant",
 					ToolCalls: []model.ToolCallOutput{
 						{
-							CallID:    "call_1",
-							Name:      "submit",
-							Arguments: map[string]any{"value": "ok"},
+							CallID:       "call_1",
+							Name:         "submit",
+							RawArguments: `{"value":"ok"}`,
 						},
 					},
 				},

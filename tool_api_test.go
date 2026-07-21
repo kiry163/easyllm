@@ -9,7 +9,7 @@ import (
 )
 
 type submitArgs struct {
-	Value string `tool:"name=value,required"`
+	Value string `json:"value" tool:"required"`
 }
 
 type submitRunner struct{}
@@ -29,20 +29,191 @@ func (submitRunner) Run(ctx context.Context, call easyllm.ToolCallContext, args 
 	}, nil
 }
 
-func TestNewRepairsQuotedJSONObjectArguments(t *testing.T) {
+type guidedArgs struct {
+	Answer  string `json:"answer" tool:"required,minLength=2"`
+	Success bool   `json:"success" tool:"required"`
+}
+
+type guidedRunner struct {
+	call easyllm.ToolCallContext
+}
+
+func (*guidedRunner) Name() string        { return "guided" }
+func (*guidedRunner) Description() string { return "guided repair" }
+
+func (r *guidedRunner) Run(ctx context.Context, call easyllm.ToolCallContext, args guidedArgs) (easyllm.ToolResult, error) {
+	r.call = call
+	return easyllm.ToolResult{Data: map[string]any{
+		"answer":  args.Answer,
+		"success": args.Success,
+	}}, nil
+}
+
+func TestNewRepairsRawJSONObjectArguments(t *testing.T) {
 	submitTool, err := easyllm.NewTool[submitArgs](submitRunner{})
 	if err != nil {
 		t.Fatalf("New returned error: %v", err)
 	}
 
-	result, err := submitTool.Invoke(context.Background(), easyllm.ToolCallContext{Name: "submit"}, map[string]any{
-		"raw": "\"{\\\"value\\\":\\\"ok\\\"}\"",
+	result, err := submitTool.Invoke(context.Background(), easyllm.ToolCallContext{
+		Name:         "submit",
+		RawArguments: `{"value":"ok"}`,
 	})
 	if err != nil {
 		t.Fatalf("Invoke returned error: %v", err)
 	}
 	if result.Data["value"] != "ok" {
 		t.Fatalf("unexpected value: %#v", result.Data["value"])
+	}
+}
+
+func TestNewUsesRepairIntoWithRawArguments(t *testing.T) {
+	runner := &guidedRunner{}
+	tool, err := easyllm.NewTool[guidedArgs](runner)
+	if err != nil {
+		t.Fatalf("NewTool returned error: %v", err)
+	}
+	raw := `{"answer":"foo", "unknown": 30, bar","success":true}`
+	result, err := tool.Invoke(
+		context.Background(),
+		easyllm.ToolCallContext{Name: "guided", RawArguments: raw},
+	)
+	if err != nil {
+		t.Fatalf("Invoke returned error: %v", err)
+	}
+	if result.Data["answer"] != `foo", "unknown": 30, bar` || result.Data["success"] != true {
+		t.Fatalf("unexpected repaired result: %#v", result.Data)
+	}
+	if !runner.call.Repaired {
+		t.Fatal("expected repaired call context")
+	}
+	if runner.call.RepairStrategy == "" {
+		t.Fatal("expected repair strategy in call context")
+	}
+}
+
+func TestInvokeDoesNotFallbackAfterRepairFailure(t *testing.T) {
+	runner := &guidedRunner{}
+	tool, err := easyllm.NewTool[guidedArgs](runner)
+	if err != nil {
+		t.Fatalf("NewTool returned error: %v", err)
+	}
+	if _, err := tool.Invoke(context.Background(), easyllm.ToolCallContext{RawArguments: "not a JSON object"}); err == nil {
+		t.Fatal("expected invalid arguments error")
+	}
+	if runner.call.Name != "" {
+		t.Fatalf("runner executed after repair failure: %+v", runner.call)
+	}
+}
+
+func TestUnknownArgumentPolicies(t *testing.T) {
+	raw := `{"answer":"ok","success":true,"extra":1}`
+
+	t.Run("reject by default", func(t *testing.T) {
+		tool, err := easyllm.NewTool[guidedArgs](&guidedRunner{})
+		if err != nil {
+			t.Fatalf("NewTool returned error: %v", err)
+		}
+		_, err = tool.Invoke(context.Background(), easyllm.ToolCallContext{RawArguments: raw})
+		if err == nil || !strings.Contains(err.Error(), "extra is not allowed") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("warn and continue", func(t *testing.T) {
+		runner := &guidedRunner{}
+		tool, err := easyllm.NewTool[guidedArgs](runner, easyllm.WithUnknownArguments(easyllm.UnknownArgumentsWarn))
+		if err != nil {
+			t.Fatalf("NewTool returned error: %v", err)
+		}
+		if _, err := tool.Invoke(context.Background(), easyllm.ToolCallContext{RawArguments: raw}); err != nil {
+			t.Fatalf("Invoke returned error: %v", err)
+		}
+		if len(runner.call.ArgumentIssues) != 1 || runner.call.ArgumentIssues[0].Path != "extra" {
+			t.Fatalf("unexpected argument issues: %#v", runner.call.ArgumentIssues)
+		}
+	})
+
+	t.Run("ignore and continue", func(t *testing.T) {
+		runner := &guidedRunner{}
+		tool, err := easyllm.NewTool[guidedArgs](runner, easyllm.WithUnknownArguments(easyllm.UnknownArgumentsIgnore))
+		if err != nil {
+			t.Fatalf("NewTool returned error: %v", err)
+		}
+		if _, err := tool.Invoke(context.Background(), easyllm.ToolCallContext{RawArguments: raw}); err != nil {
+			t.Fatalf("Invoke returned error: %v", err)
+		}
+		if len(runner.call.ArgumentIssues) != 0 {
+			t.Fatalf("unexpected argument issues: %#v", runner.call.ArgumentIssues)
+		}
+	})
+}
+
+func TestRepairIntoArgsUsesTypedValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		raw     string
+		wantErr string
+	}{
+		{name: "required", raw: `{"success":true}`, wantErr: "answer is required"},
+		{name: "constraint", raw: `{"answer":"x","success":true}`, wantErr: "answer length must be >= 2"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tool, err := easyllm.NewTool[guidedArgs](&guidedRunner{})
+			if err != nil {
+				t.Fatalf("NewTool returned error: %v", err)
+			}
+			_, err = tool.Invoke(context.Background(), easyllm.ToolCallContext{RawArguments: tt.raw})
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("expected %q, got %v", tt.wantErr, err)
+			}
+		})
+	}
+}
+
+func TestSchemaForUsesJSONTagsAndRejectsLegacyNames(t *testing.T) {
+	type jsonArgs struct {
+		UserID string `json:"user_id" tool:"required"`
+	}
+	schema, err := easyllm.SchemaFor[jsonArgs]()
+	if err != nil {
+		t.Fatalf("SchemaFor returned error: %v", err)
+	}
+	properties := schema["properties"].(map[string]any)
+	if _, ok := properties["user_id"]; !ok {
+		t.Fatalf("JSON field missing from schema: %#v", properties)
+	}
+
+	type legacyArgs struct {
+		UserID string `tool:"name=user_id,required"`
+	}
+	if _, err := easyllm.SchemaFor[legacyArgs](); err == nil || !strings.Contains(err.Error(), "use a json tag") {
+		t.Fatalf("unexpected legacy tag error: %v", err)
+	}
+
+	type stringOptionArgs struct {
+		Count int `json:"count,string"`
+	}
+	if _, err := easyllm.SchemaFor[stringOptionArgs](); err == nil || !strings.Contains(err.Error(), "json option string") {
+		t.Fatalf("unexpected json string option error: %v", err)
+	}
+
+	type embedded struct {
+		Value string `json:"value"`
+	}
+	type anonymousArgs struct {
+		embedded
+	}
+	if _, err := easyllm.SchemaFor[anonymousArgs](); err == nil || !strings.Contains(err.Error(), "anonymous tool field") {
+		t.Fatalf("unexpected anonymous field error: %v", err)
+	}
+}
+
+func TestNewRejectsInvalidUnknownArgumentPolicy(t *testing.T) {
+	_, err := easyllm.NewTool[submitArgs](submitRunner{}, easyllm.WithUnknownArguments("invalid"))
+	if err == nil || !strings.Contains(err.Error(), "invalid unknown argument policy") {
+		t.Fatalf("unexpected policy error: %v", err)
 	}
 }
 
@@ -70,8 +241,8 @@ func TestNewSupportsStrictOption(t *testing.T) {
 
 func TestSchemaForSupportsEnumRangeAndClosedObjects(t *testing.T) {
 	type forecastArgs struct {
-		Unit string `tool:"name=unit,required,desc=Temperature unit,enum=celsius|fahrenheit"`
-		Days int    `tool:"name=days,desc=Forecast days,minimum=1,maximum=10"`
+		Unit string `json:"unit" tool:"required,desc=Temperature unit,enum=celsius|fahrenheit"`
+		Days int    `json:"days" tool:"desc=Forecast days,minimum=1,maximum=10"`
 	}
 
 	schema, err := easyllm.SchemaFor[forecastArgs]()
@@ -111,8 +282,8 @@ func TestSchemaForSupportsEnumRangeAndClosedObjects(t *testing.T) {
 
 func TestSchemaForSupportsStringAndArrayLengthConstraints(t *testing.T) {
 	type profileArgs struct {
-		Nickname string   `tool:"name=nickname,required,minLength=2,maxLength=12"`
-		Hobbies  []string `tool:"name=hobbies,required,minItems=1,maxItems=5"`
+		Nickname string   `json:"nickname" tool:"required,minLength=2,maxLength=12"`
+		Hobbies  []string `json:"hobbies" tool:"required,minItems=1,maxItems=5"`
 	}
 
 	schema, err := easyllm.SchemaFor[profileArgs]()
@@ -141,8 +312,8 @@ func TestSchemaForSupportsStringAndArrayLengthConstraints(t *testing.T) {
 
 func TestBindArgsValidatesEnumRangeAndUnknownFields(t *testing.T) {
 	type forecastArgs struct {
-		Unit string `tool:"name=unit,required,enum=celsius|fahrenheit"`
-		Days int    `tool:"name=days,minimum=1,maximum=10"`
+		Unit string `json:"unit" tool:"required,enum=celsius|fahrenheit"`
+		Days int    `json:"days" tool:"minimum=1,maximum=10"`
 	}
 
 	tests := []struct {
@@ -199,8 +370,8 @@ func TestBindArgsValidatesEnumRangeAndUnknownFields(t *testing.T) {
 
 func TestBindArgsValidatesStringAndArrayLengthConstraints(t *testing.T) {
 	type profileArgs struct {
-		Nickname string   `tool:"name=nickname,required,minLength=2,maxLength=12"`
-		Hobbies  []string `tool:"name=hobbies,required,minItems=1,maxItems=2"`
+		Nickname string   `json:"nickname" tool:"required,minLength=2,maxLength=12"`
+		Hobbies  []string `json:"hobbies" tool:"required,minItems=1,maxItems=2"`
 	}
 
 	tests := []struct {

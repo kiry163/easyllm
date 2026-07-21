@@ -3,37 +3,53 @@ package easyllm
 import (
 	"fmt"
 	"reflect"
-
-	"github.com/kiry163/easyllm/internal/jsonrepair"
 )
 
 func BindArgs[T any](raw map[string]any) (T, error) {
+	out, _, err := bindArgs[T](raw, UnknownArgumentsReject)
+	return out, err
+}
+
+func bindArgs[T any](raw map[string]any, unknownPolicy UnknownArgumentPolicy) (T, []ToolArgumentIssue, error) {
 	var out T
 	target := reflect.ValueOf(&out).Elem()
 	if target.Kind() != reflect.Struct {
-		return out, fmt.Errorf("tool args target must be a struct")
+		return out, nil, fmt.Errorf("tool args target must be a struct")
 	}
 	if raw == nil {
 		raw = map[string]any{}
 	}
-	if err := bindStruct(target, raw, ""); err != nil {
-		return out, err
+	var issues []ToolArgumentIssue
+	if err := bindStruct(target, raw, "", unknownPolicy, &issues); err != nil {
+		return out, issues, err
 	}
-	return out, nil
+	return out, issues, nil
 }
 
-func bindStruct(target reflect.Value, raw map[string]any, path string) error {
+func bindStruct(target reflect.Value, raw map[string]any, path string, unknownPolicy UnknownArgumentPolicy, issues *[]ToolArgumentIssue) error {
 	typ := target.Type()
 	allowed := map[string]struct{}{}
 	for i := 0; i < typ.NumField(); i++ {
 		field := typ.Field(i)
+		if field.Anonymous {
+			return fmt.Errorf("anonymous tool field %s is unsupported; use a named field", field.Name)
+		}
 		if field.PkgPath != "" {
 			continue
 		}
 		tag := parseToolTag(field)
-		name := fieldName(field, tag)
+		if tag.legacyName {
+			return fmt.Errorf("tool field %s uses unsupported name=; use a json tag instead", field.Name)
+		}
+		name, err := fieldName(field)
+		if err != nil {
+			return err
+		}
 		if name == "-" {
 			continue
+		}
+		if _, exists := allowed[name]; exists {
+			return fmt.Errorf("duplicate tool JSON field %q", name)
 		}
 		allowed[name] = struct{}{}
 		value, ok := raw[name]
@@ -47,7 +63,7 @@ func bindStruct(target reflect.Value, raw map[string]any, path string) error {
 			}
 			continue
 		}
-		if err := assignValue(target.Field(i), value, fieldPath); err != nil {
+		if err := assignValue(target.Field(i), value, fieldPath, unknownPolicy, issues); err != nil {
 			return err
 		}
 		if err := validateConstraints(target.Field(i), tag, fieldPath); err != nil {
@@ -60,10 +76,133 @@ func bindStruct(target reflect.Value, raw map[string]any, path string) error {
 			if path != "" {
 				fieldPath = path + "." + name
 			}
-			return fmt.Errorf("%s is not allowed", fieldPath)
+			if err := handleUnknownArgument(fieldPath, unknownPolicy, issues); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
+}
+
+func validateTypedArgs[T any](args T, raw map[string]any, unknownPolicy UnknownArgumentPolicy) ([]ToolArgumentIssue, error) {
+	target := reflect.ValueOf(args)
+	if target.Kind() != reflect.Struct {
+		return nil, fmt.Errorf("tool args target must be a struct")
+	}
+	if raw == nil {
+		raw = map[string]any{}
+	}
+	var issues []ToolArgumentIssue
+	if err := validateTypedStruct(target, raw, "", unknownPolicy, &issues); err != nil {
+		return issues, err
+	}
+	return issues, nil
+}
+
+func validateTypedStruct(target reflect.Value, raw map[string]any, path string, unknownPolicy UnknownArgumentPolicy, issues *[]ToolArgumentIssue) error {
+	target = derefValue(target)
+	typ := target.Type()
+	allowed := map[string]struct{}{}
+	for i := 0; i < typ.NumField(); i++ {
+		field := typ.Field(i)
+		if field.Anonymous {
+			return fmt.Errorf("anonymous tool field %s is unsupported; use a named field", field.Name)
+		}
+		if field.PkgPath != "" {
+			continue
+		}
+		tag := parseToolTag(field)
+		if tag.legacyName {
+			return fmt.Errorf("tool field %s uses unsupported name=; use a json tag instead", field.Name)
+		}
+		name, err := fieldName(field)
+		if err != nil {
+			return err
+		}
+		if name == "-" {
+			continue
+		}
+		if _, exists := allowed[name]; exists {
+			return fmt.Errorf("duplicate tool JSON field %q", name)
+		}
+		allowed[name] = struct{}{}
+		value, ok := raw[name]
+		fieldPath := joinArgumentPath(path, name)
+		if !ok {
+			if tag.Required {
+				return fmt.Errorf("%s is required", fieldPath)
+			}
+			continue
+		}
+		fieldValue := target.Field(i)
+		if err := validateConstraints(fieldValue, tag, fieldPath); err != nil {
+			return err
+		}
+		if err := validateTypedNested(fieldValue, value, fieldPath, unknownPolicy, issues); err != nil {
+			return err
+		}
+	}
+	for name := range raw {
+		if _, ok := allowed[name]; !ok {
+			if err := handleUnknownArgument(joinArgumentPath(path, name), unknownPolicy, issues); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func validateTypedNested(target reflect.Value, raw any, path string, unknownPolicy UnknownArgumentPolicy, issues *[]ToolArgumentIssue) error {
+	target = derefValue(target)
+	if !target.IsValid() {
+		return nil
+	}
+	switch target.Kind() {
+	case reflect.Struct:
+		obj, ok := raw.(map[string]any)
+		if !ok {
+			return nil
+		}
+		return validateTypedStruct(target, obj, path, unknownPolicy, issues)
+	case reflect.Slice, reflect.Array:
+		items, ok := raw.([]any)
+		if !ok {
+			return nil
+		}
+		limit := target.Len()
+		if len(items) < limit {
+			limit = len(items)
+		}
+		for i := 0; i < limit; i++ {
+			if err := validateTypedNested(target.Index(i), items[i], fmt.Sprintf("%s[%d]", path, i), unknownPolicy, issues); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func handleUnknownArgument(path string, policy UnknownArgumentPolicy, issues *[]ToolArgumentIssue) error {
+	switch policy {
+	case UnknownArgumentsWarn:
+		*issues = append(*issues, ToolArgumentIssue{
+			Code:    "unknown_argument",
+			Path:    path,
+			Message: fmt.Sprintf("%s is not defined by the tool schema", path),
+		})
+		return nil
+	case UnknownArgumentsIgnore:
+		return nil
+	default:
+		return fmt.Errorf("%s is not allowed", path)
+	}
+}
+
+func joinArgumentPath(parent, name string) string {
+	if parent == "" {
+		return name
+	}
+	return parent + "." + name
 }
 
 func validateConstraints(value reflect.Value, tag toolTag, path string) error {
@@ -148,20 +287,19 @@ func formatNumber(value float64) string {
 	return fmt.Sprintf("%g", value)
 }
 
-func assignValue(target reflect.Value, raw any, path string) error {
+func assignValue(target reflect.Value, raw any, path string, unknownPolicy UnknownArgumentPolicy, issues *[]ToolArgumentIssue) error {
 	if !target.CanSet() {
 		return fmt.Errorf("%s is not assignable", path)
 	}
 	targetType := target.Type()
 	if targetType.Kind() == reflect.Pointer {
 		elem := reflect.New(targetType.Elem())
-		if err := assignValue(elem.Elem(), raw, path); err != nil {
+		if err := assignValue(elem.Elem(), raw, path, unknownPolicy, issues); err != nil {
 			return err
 		}
 		target.Set(elem)
 		return nil
 	}
-	raw = repairStructuredStringValue(targetType, raw)
 	switch targetType.Kind() {
 	case reflect.String:
 		text, ok := raw.(string)
@@ -203,7 +341,7 @@ func assignValue(target reflect.Value, raw any, path string) error {
 		if !ok {
 			return fmt.Errorf("%s must be an object", path)
 		}
-		return bindStruct(target, obj, path)
+		return bindStruct(target, obj, path, unknownPolicy, issues)
 	case reflect.Slice:
 		items, ok := raw.([]any)
 		if !ok {
@@ -212,7 +350,7 @@ func assignValue(target reflect.Value, raw any, path string) error {
 		slice := reflect.MakeSlice(targetType, 0, len(items))
 		for i, item := range items {
 			elem := reflect.New(targetType.Elem()).Elem()
-			if err := assignValue(elem, item, fmt.Sprintf("%s[%d]", path, i)); err != nil {
+			if err := assignValue(elem, item, fmt.Sprintf("%s[%d]", path, i), unknownPolicy, issues); err != nil {
 				return err
 			}
 			slice = reflect.Append(slice, elem)
@@ -222,36 +360,6 @@ func assignValue(target reflect.Value, raw any, path string) error {
 	default:
 		return fmt.Errorf("%s has unsupported type %s", path, targetType.String())
 	}
-}
-
-func repairStructuredStringValue(targetType reflect.Type, raw any) any {
-	text, ok := raw.(string)
-	if !ok {
-		return raw
-	}
-
-	switch targetType.Kind() {
-	case reflect.Struct:
-		parsed, _, err := jsonrepair.DecodeJSONObjectString(text)
-		if err == nil {
-			return parsed
-		}
-	case reflect.Slice:
-		if derefType(targetType.Elem()).Kind() != reflect.Struct {
-			return raw
-		}
-		parsed, _, err := jsonrepair.DecodeJSONArrayString(text)
-		if err != nil {
-			return raw
-		}
-		items := make([]any, 0, len(parsed))
-		for _, item := range parsed {
-			items = append(items, item)
-		}
-		return items
-	}
-
-	return raw
 }
 
 func numericValue(raw any) (int64, bool) {

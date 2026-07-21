@@ -78,9 +78,7 @@ type ToolCallItem struct {
 	ID            string         `json:"id"`
 	CallID        string         `json:"call_id"`
 	Name          string         `json:"name"`
-	Arguments     map[string]any `json:"arguments"`
 	RawArguments  string         `json:"raw_arguments"`
-	Repaired      bool           `json:"repaired"`
 	ProviderState map[string]any `json:"provider_state"`
 	Metadata      map[string]any `json:"metadata"`
 }
@@ -107,18 +105,25 @@ func (AssistantOutput) outputItem() {}
 type ToolCallOutput struct {
 	CallID        string         `json:"call_id"`
 	Name          string         `json:"name"`
-	Arguments     map[string]any `json:"arguments"`
 	RawArguments  string         `json:"raw_arguments"`
-	Repaired      bool           `json:"repaired"`
 	ProviderState map[string]any `json:"provider_state"`
 }
 
 type ToolDefinition struct {
-	Name        string         `json:"name"`
-	Description string         `json:"description"`
-	Parameters  map[string]any `json:"parameters"`
-	Strict      *bool          `json:"strict"`
+	Name                  string                `json:"name"`
+	Description           string                `json:"description"`
+	Parameters            map[string]any        `json:"parameters"`
+	Strict                *bool                 `json:"strict"`
+	UnknownArgumentPolicy UnknownArgumentPolicy `json:"-"`
 }
+
+type UnknownArgumentPolicy string
+
+const (
+	UnknownArgumentsReject UnknownArgumentPolicy = "reject"
+	UnknownArgumentsWarn   UnknownArgumentPolicy = "warn"
+	UnknownArgumentsIgnore UnknownArgumentPolicy = "ignore"
+)
 
 type ModelRequest struct {
 	Model    string           `json:"model"`

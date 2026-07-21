@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kiry163/easyllm/internal/jsonrepair"
 	"github.com/kiry163/easyllm/internal/model"
 )
 
@@ -355,7 +354,7 @@ func openAIChatToolCallItems(items []model.ToolCallItem) []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":      current.Name,
-				"arguments": toolArgumentsString(current.Arguments, current.RawArguments),
+				"arguments": toolArgumentsString(current.RawArguments),
 			},
 		})
 	}
@@ -376,7 +375,7 @@ func openAIResponsesInput(items []model.InputItem) []map[string]any {
 		case model.AssistantMessageItem:
 			out = append(out, map[string]any{"role": "assistant", "content": []map[string]any{{"type": "output_text", "text": textPartsToString(current.Content)}}})
 			for _, call := range current.ToolCalls {
-				out = append(out, map[string]any{"type": "function_call", "call_id": call.CallID, "name": call.Name, "arguments": toolArgumentsString(call.Arguments, call.RawArguments)})
+				out = append(out, map[string]any{"type": "function_call", "call_id": call.CallID, "name": call.Name, "arguments": toolArgumentsString(call.RawArguments)})
 			}
 		case model.ToolResultItem:
 			out = append(out, map[string]any{"type": "function_call_output", "call_id": current.CallID, "output": current.Content})
@@ -516,16 +515,10 @@ func parseChatResponse(r io.Reader) (*model.ModelResponse, error) {
 		assistant.Content = append(assistant.Content, model.TextPart{Text: raw.Choices[0].Message.Content})
 	}
 	for _, call := range raw.Choices[0].Message.ToolCalls {
-		args, repaired, err := jsonrepair.DecodeJSONObjectString(call.Function.Arguments)
-		if err != nil {
-			args = map[string]any{"raw": call.Function.Arguments}
-		}
 		assistant.ToolCalls = append(assistant.ToolCalls, model.ToolCallOutput{
 			CallID:        call.ID,
 			Name:          call.Function.Name,
-			Arguments:     args,
 			RawArguments:  call.Function.Arguments,
-			Repaired:      repaired,
 			ProviderState: chatProviderState(raw.Choices[0].Message.ReasoningContent),
 		})
 	}
@@ -572,18 +565,12 @@ func parseResponsesResponse(r io.Reader) (*model.ModelResponse, error) {
 	for _, item := range raw.Output {
 		switch item.Type {
 		case "function_call":
-			args, repaired, err := jsonrepair.DecodeJSONObjectString(item.Arguments)
-			if err != nil {
-				args = map[string]any{"raw": item.Arguments}
-			}
 			out.Output = append(out.Output, model.AssistantOutput{
 				Role: "assistant",
 				ToolCalls: []model.ToolCallOutput{{
 					CallID:       item.CallID,
 					Name:         item.Name,
-					Arguments:    args,
 					RawArguments: item.Arguments,
-					Repaired:     repaired,
 				}},
 			})
 		case "message":
@@ -658,18 +645,11 @@ func textPartsToString(parts []model.TextPart) string {
 	return buf.String()
 }
 
-func toolArgumentsString(args map[string]any, raw string) string {
+func toolArgumentsString(raw string) string {
 	if raw != "" {
 		return raw
 	}
-	if len(args) == 0 {
-		return "{}"
-	}
-	data, err := json.Marshal(args)
-	if err != nil {
-		return "{}"
-	}
-	return string(data)
+	return "{}"
 }
 
 func cloneMap(src map[string]any) map[string]any {

@@ -162,11 +162,12 @@ func run(ctx context.Context, client Client, session *Session, metadata map[stri
 						continue
 					}
 					outcome, invokeErr := runTool.Invoke(ctx, ToolCallContext{
-						CallID:    call.CallID,
-						Name:      call.Name,
-						Iteration: iteration,
-						Metadata:  cloneMap(metadata),
-					}, call.Arguments)
+						CallID:       call.CallID,
+						Name:         call.Name,
+						Iteration:    iteration,
+						Metadata:     cloneMap(metadata),
+						RawArguments: call.RawArguments,
+					})
 					result.ToolResults = append(result.ToolResults, ToolCallResult{
 						Call:   call,
 						Result: outcome,
@@ -385,11 +386,12 @@ func runStream(ctx context.Context, client Client, session *Session, metadata ma
 						continue
 					}
 					outcome, invokeErr := runTool.Invoke(ctx, ToolCallContext{
-						CallID:    call.CallID,
-						Name:      call.Name,
-						Iteration: iteration,
-						Metadata:  cloneMap(metadata),
-					}, call.Arguments)
+						CallID:       call.CallID,
+						Name:         call.Name,
+						Iteration:    iteration,
+						Metadata:     cloneMap(metadata),
+						RawArguments: call.RawArguments,
+					})
 					result.ToolResults = append(result.ToolResults, ToolCallResult{
 						Call:   call,
 						Result: outcome,
@@ -510,9 +512,7 @@ func outputItemsToInputItems(items []model.OutputItem) []model.InputItem {
 				toolCalls = append(toolCalls, model.ToolCallItem{
 					CallID:        call.CallID,
 					Name:          call.Name,
-					Arguments:     call.Arguments,
 					RawArguments:  call.RawArguments,
-					Repaired:      call.Repaired,
 					ProviderState: cloneMap(call.ProviderState),
 				})
 			}

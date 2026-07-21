@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kiry163/easyllm/internal/jsonrepair"
 	"github.com/kiry163/easyllm/internal/model"
 )
 
@@ -222,16 +221,10 @@ func (c *Client) parseChatStream(handler model.StreamHandler) func(context.Conte
 					continue
 				}
 				rawArgs := current.Arguments.String()
-				args, repaired, err := jsonrepair.DecodeJSONObjectString(rawArgs)
-				if err != nil {
-					args = map[string]any{"raw": rawArgs}
-				}
 				assistant.ToolCalls = append(assistant.ToolCalls, model.ToolCallOutput{
 					CallID:        current.CallID,
 					Name:          current.Name,
-					Arguments:     args,
 					RawArguments:  rawArgs,
-					Repaired:      repaired,
 					ProviderState: chatProviderState(reasoning.String()),
 				})
 			}

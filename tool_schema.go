@@ -5,11 +5,9 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
-	"unicode"
 )
 
 type toolTag struct {
-	Name        string
 	Description string
 	Required    bool
 	Enum        []any
@@ -19,6 +17,7 @@ type toolTag struct {
 	MaxLength   *int
 	MinItems    *int
 	MaxItems    *int
+	legacyName  bool
 }
 
 func SchemaFor[T any]() (map[string]any, error) {
@@ -38,13 +37,25 @@ func schemaForType(typ reflect.Type, topLevel bool) (map[string]any, error) {
 		required := make([]string, 0)
 		for i := 0; i < typ.NumField(); i++ {
 			field := typ.Field(i)
+			if field.Anonymous {
+				return nil, fmt.Errorf("anonymous tool field %s is unsupported; use a named field", field.Name)
+			}
 			if field.PkgPath != "" {
 				continue
 			}
 			tag := parseToolTag(field)
-			name := fieldName(field, tag)
+			if tag.legacyName {
+				return nil, fmt.Errorf("tool field %s uses unsupported name=; use a json tag instead", field.Name)
+			}
+			name, err := fieldName(field)
+			if err != nil {
+				return nil, err
+			}
 			if name == "-" {
 				continue
+			}
+			if _, exists := properties[name]; exists {
+				return nil, fmt.Errorf("duplicate tool JSON field %q", name)
 			}
 			fieldSchema, err := schemaForType(field.Type, false)
 			if err != nil {
@@ -125,7 +136,7 @@ func parseToolTag(field reflect.StructField) toolTag {
 		case part == "required":
 			out.Required = true
 		case strings.HasPrefix(part, "name="):
-			out.Name = strings.TrimSpace(strings.TrimPrefix(part, "name="))
+			out.legacyName = true
 		case strings.HasPrefix(part, "desc="):
 			out.Description = strings.TrimSpace(strings.TrimPrefix(part, "desc="))
 		case strings.HasPrefix(part, "enum="):
@@ -197,37 +208,25 @@ func parseIntTag(raw string) (int, bool) {
 	return value, true
 }
 
-func fieldName(field reflect.StructField, tag toolTag) string {
-	if tag.Name != "" {
-		return tag.Name
+func fieldName(field reflect.StructField) (string, error) {
+	raw, ok := field.Tag.Lookup("json")
+	if !ok {
+		return field.Name, nil
 	}
-	jsonTag := strings.TrimSpace(field.Tag.Get("json"))
-	if jsonTag != "" {
-		name := strings.Split(jsonTag, ",")[0]
-		if name != "" {
-			return name
+	parts := strings.Split(raw, ",")
+	name := parts[0]
+	if name == "-" {
+		return "-", nil
+	}
+	if name == "" {
+		name = field.Name
+	}
+	for _, option := range parts[1:] {
+		if option == "string" {
+			return "", fmt.Errorf("tool field %s uses unsupported json option string", field.Name)
 		}
 	}
-	return toSnakeCase(field.Name)
-}
-
-func toSnakeCase(value string) string {
-	if value == "" {
-		return ""
-	}
-	var b strings.Builder
-	runes := []rune(value)
-	for i, r := range runes {
-		if unicode.IsUpper(r) {
-			if i > 0 && (unicode.IsLower(runes[i-1]) || (i+1 < len(runes) && unicode.IsLower(runes[i+1]))) {
-				b.WriteByte('_')
-			}
-			b.WriteRune(unicode.ToLower(r))
-			continue
-		}
-		b.WriteRune(r)
-	}
-	return b.String()
+	return name, nil
 }
 
 func derefType(typ reflect.Type) reflect.Type {

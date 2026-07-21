@@ -105,7 +105,7 @@ func TestChatClientRetriesAndNormalizesToolCalls(t *testing.T) {
 		t.Fatalf("unexpected tool call count: %d", len(assistant.ToolCalls))
 	}
 	call := assistant.ToolCalls[0]
-	if call.Name != "submit" || call.Arguments["value"] != "ok" || !call.Repaired {
+	if call.Name != "submit" || call.RawArguments != `"{\"value\":\"ok\"}"` {
 		t.Fatalf("unexpected tool call output: %+v", call)
 	}
 }
