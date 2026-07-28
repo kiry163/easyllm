@@ -157,7 +157,7 @@ func TestHTTPMiddlewareWrapsEveryPublicRetryAttempt(t *testing.T) {
 	}
 }
 
-func TestHTTPMiddlewareAppliesToImageAndModelList(t *testing.T) {
+func TestHTTPMiddlewareAppliesToDirectCapabilities(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/images/generations":
@@ -169,6 +169,16 @@ func TestHTTPMiddlewareAppliesToImageAndModelList(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"object": "list",
 				"data":   []map[string]any{{"id": "test-model"}},
+			})
+		case "/embeddings":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"model": "embedding-model",
+				"data":  []map[string]any{{"index": 0, "embedding": []float64{0.1}}},
+			})
+		case "/reranks":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"model":   "qwen3-rerank",
+				"results": []map[string]any{{"index": 0, "relevance_score": 0.9}},
 			})
 		default:
 			http.NotFound(w, r)
@@ -203,7 +213,35 @@ func TestHTTPMiddlewareAppliesToImageAndModelList(t *testing.T) {
 		t.Fatalf("ListModels returned error: %v", err)
 	}
 
-	if applications.Load() != 2 || calls.Load() != 2 {
+	embeddingClient, err := NewEmbeddingClient(Config{
+		Provider:       ProviderOpenAI,
+		APIKey:         "token",
+		BaseURL:        server.URL,
+		Model:          "embedding-model",
+		HTTPMiddleware: middleware,
+	})
+	if err != nil {
+		t.Fatalf("NewEmbeddingClient returned error: %v", err)
+	}
+	if _, err := embeddingClient.Embed(context.Background(), EmbeddingRequest{Input: []string{"text"}}); err != nil {
+		t.Fatalf("Embed returned error: %v", err)
+	}
+
+	rerankClient, err := NewRerankClient(Config{
+		Provider:       ProviderQwen,
+		APIKey:         "token",
+		BaseURL:        server.URL,
+		Model:          "qwen3-rerank",
+		HTTPMiddleware: middleware,
+	})
+	if err != nil {
+		t.Fatalf("NewRerankClient returned error: %v", err)
+	}
+	if _, err := rerankClient.Rerank(context.Background(), RerankRequest{Query: "query", Documents: []string{"document"}}); err != nil {
+		t.Fatalf("Rerank returned error: %v", err)
+	}
+
+	if applications.Load() != 4 || calls.Load() != 4 {
 		t.Fatalf("applications=%d calls=%d", applications.Load(), calls.Load())
 	}
 }
@@ -238,6 +276,24 @@ func TestPublicOperationsRejectNilHTTPDoer(t *testing.T) {
 				Provider:       ProviderOpenAI,
 				APIKey:         "token",
 				BaseURL:        server.URL,
+				HTTPMiddleware: nilMiddleware,
+			})
+			return err
+		},
+		func() error {
+			_, err := NewEmbeddingClient(Config{
+				Provider:       ProviderOpenAI,
+				APIKey:         "token",
+				Model:          "embedding-model",
+				HTTPMiddleware: nilMiddleware,
+			})
+			return err
+		},
+		func() error {
+			_, err := NewRerankClient(Config{
+				Provider:       ProviderQwen,
+				APIKey:         "token",
+				Model:          "qwen3-rerank",
 				HTTPMiddleware: nilMiddleware,
 			})
 			return err

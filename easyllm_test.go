@@ -42,6 +42,52 @@ func TestNewImageClientBuildsOpenAIImageClient(t *testing.T) {
 	}
 }
 
+func TestNewEmbeddingClientSupportsOpenAIProtocols(t *testing.T) {
+	for _, config := range []Config{
+		{Provider: ProviderOpenAI, APIKey: "token", Model: "text-embedding-3-small"},
+		{Provider: ProviderOpenAICompatible, BaseURL: "http://localhost:12345/v1", Model: "bge-m3"},
+	} {
+		client, err := NewEmbeddingClient(config)
+		if err != nil {
+			t.Fatalf("NewEmbeddingClient(%q) returned error: %v", config.Provider, err)
+		}
+		if client == nil {
+			t.Fatalf("expected embedding client for %q", config.Provider)
+		}
+	}
+}
+
+func TestNewEmbeddingClientRejectsUnsupportedProvider(t *testing.T) {
+	_, err := NewEmbeddingClient(Config{Provider: ProviderQwen, APIKey: "token", Model: "text-embedding-v3"})
+	if err == nil || err.Error() != `provider "qwen" does not support embeddings` {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestNewRerankClientSupportsQwen(t *testing.T) {
+	client, err := NewRerankClient(Config{Provider: ProviderQwen, APIKey: "token", Model: "qwen3-rerank"})
+	if err != nil {
+		t.Fatalf("NewRerankClient returned error: %v", err)
+	}
+	if client == nil {
+		t.Fatal("expected rerank client")
+	}
+}
+
+func TestNewRerankClientRejectsUnsupportedProvider(t *testing.T) {
+	_, err := NewRerankClient(Config{Provider: ProviderOpenAI, APIKey: "token", Model: "rerank-model"})
+	if err == nil || err.Error() != `provider "openai" does not support reranking` {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestNewRerankClientRejectsUnsupportedQwenModel(t *testing.T) {
+	_, err := NewRerankClient(Config{Provider: ProviderQwen, APIKey: "token", Model: "gte-rerank-v2"})
+	if err == nil || err.Error() != `model "gte-rerank-v2" is not supported for qwen reranking` {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestContentPartConstructors(t *testing.T) {
 	text := NewTextPart("hello")
 	if text.Type != ContentPartTypeText || text.Text != "hello" {

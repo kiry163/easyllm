@@ -7,6 +7,8 @@ The public API is intentionally centered on one import:
 - `easyllm.NewClient(...)` creates a provider-backed model client.
 - `easyllm.NewEngine(...)` runs instructions, tools, sessions, hooks, and the tool-calling loop.
 - `easyllm.NewTool(...)` turns typed Go structs and runner methods into model-callable tools.
+- `easyllm.NewEmbeddingClient(...)` creates embeddings through the OpenAI protocol.
+- `easyllm.NewRerankClient(...)` reranks text documents with Qwen3-Rerank.
 
 ## Install
 
@@ -358,6 +360,62 @@ fmt.Println(result.StopReason)
 ```
 
 Streaming is available on the built-in OpenAI, OpenAI-compatible, Qwen, and DeepSeek clients. `TransportResponses` streaming is available on providers that expose the responses transport; DeepSeek remains chat-only.
+
+## Embeddings
+
+Use `NewEmbeddingClient(...)` with OpenAI or an OpenAI-compatible endpoint. Inputs are batched and returned as `[]float32` vectors.
+
+```go
+client, err := easyllm.NewEmbeddingClient(easyllm.Config{
+	Provider: easyllm.ProviderOpenAI,
+	APIKey:   os.Getenv("OPENAI_API_KEY"),
+	Model:    "text-embedding-3-small",
+})
+if err != nil {
+	panic(err)
+}
+
+resp, err := client.Embed(context.Background(), easyllm.EmbeddingRequest{
+	Input:      []string{"first document", "second document"},
+	Dimensions: 1024,
+})
+if err != nil {
+	panic(err)
+}
+
+fmt.Println(resp.Embeddings[0].Vector)
+```
+
+`ProviderOpenAICompatible` uses the same `/embeddings` wire protocol and requires `Config.BaseURL`. Phase one supports numeric embedding arrays; base64 and token-ID inputs are not supported.
+
+## Reranking
+
+Use `NewRerankClient(...)` with `ProviderQwen` and `qwen3-rerank`. The client calls the flat `POST /reranks` endpoint and returns each original document with its score.
+
+```go
+client, err := easyllm.NewRerankClient(easyllm.Config{
+	Provider: easyllm.ProviderQwen,
+	APIKey:   os.Getenv("DASHSCOPE_API_KEY"),
+	Model:    "qwen3-rerank",
+})
+if err != nil {
+	panic(err)
+}
+
+resp, err := client.Rerank(context.Background(), easyllm.RerankRequest{
+	Query:        "What is a vector database?",
+	Documents:    []string{"A vector database stores embeddings.", "A queue schedules jobs."},
+	TopN:         1,
+	Instruction:  "Rank passages by how directly they answer the query.",
+})
+if err != nil {
+	panic(err)
+}
+
+fmt.Println(resp.Results[0].Document, resp.Results[0].Score)
+```
+
+Phase one does not support `gte-rerank-v2`, the nested DashScope rerank protocol, or multimodal reranking.
 
 ## Image Generation
 

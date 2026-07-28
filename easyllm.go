@@ -36,6 +36,14 @@ type ImageClient = model.ImageClient
 type ImageRequest = model.ImageRequest
 type ImageResponse = model.ImageResponse
 type GeneratedImage = model.GeneratedImage
+type EmbeddingClient = model.EmbeddingClient
+type EmbeddingRequest = model.EmbeddingRequest
+type EmbeddingResponse = model.EmbeddingResponse
+type Embedding = model.Embedding
+type RerankClient = model.RerankClient
+type RerankRequest = model.RerankRequest
+type RerankResponse = model.RerankResponse
+type RerankResult = model.RerankResult
 type InputItem = model.InputItem
 type OutputItem = model.OutputItem
 type Usage = model.Usage
@@ -146,6 +154,39 @@ func NewImageClient(config Config) (ImageClient, error) {
 	}
 }
 
+func NewEmbeddingClient(config Config) (EmbeddingClient, error) {
+	if err := validateCapabilityConfig(config); err != nil {
+		return nil, err
+	}
+	if config.Provider != ProviderOpenAI && config.Provider != ProviderOpenAICompatible {
+		return nil, fmt.Errorf("provider %q does not support embeddings", config.Provider)
+	}
+
+	doer, err := newHTTPDoer(config)
+	if err != nil {
+		return nil, err
+	}
+	return newOpenAIEmbeddingClient(config, doer), nil
+}
+
+func NewRerankClient(config Config) (RerankClient, error) {
+	if err := validateCapabilityConfig(config); err != nil {
+		return nil, err
+	}
+	if config.Provider != ProviderQwen {
+		return nil, fmt.Errorf("provider %q does not support reranking", config.Provider)
+	}
+	if strings.TrimSpace(config.Model) != "qwen3-rerank" {
+		return nil, fmt.Errorf("model %q is not supported for qwen reranking", config.Model)
+	}
+
+	doer, err := newHTTPDoer(config)
+	if err != nil {
+		return nil, err
+	}
+	return newQwenRerankClient(config, doer), nil
+}
+
 func ListModels(ctx context.Context, config Config) (*ListModelsResponse, error) {
 	if err := validateListModelsConfig(config); err != nil {
 		return nil, err
@@ -199,6 +240,27 @@ func validateListModelsConfig(config Config) error {
 		return fmt.Errorf("unsupported provider %q", config.Provider)
 	}
 	return nil
+}
+
+func validateCapabilityConfig(config Config) error {
+	if strings.TrimSpace(config.Provider) == "" {
+		return fmt.Errorf("provider is required")
+	}
+	if strings.TrimSpace(config.APIKey) == "" && config.Provider != ProviderOpenAICompatible {
+		return fmt.Errorf("api key is required")
+	}
+	if config.Provider == ProviderOpenAICompatible && strings.TrimSpace(config.BaseURL) == "" {
+		return fmt.Errorf("base url is required for provider %q", ProviderOpenAICompatible)
+	}
+	if strings.TrimSpace(config.Model) == "" {
+		return fmt.Errorf("model is required")
+	}
+	switch config.Provider {
+	case ProviderOpenAI, ProviderOpenAICompatible, ProviderQwen, ProviderDeepSeek:
+		return nil
+	default:
+		return fmt.Errorf("unsupported provider %q", config.Provider)
+	}
 }
 
 func newOpenAIClient(config Config, doer HTTPDoer) Client {
@@ -287,6 +349,27 @@ func newOpenAIImageClient(config Config, doer HTTPDoer) ImageClient {
 	})
 }
 
+func newOpenAIEmbeddingClient(config Config, doer HTTPDoer) EmbeddingClient {
+	providerName := config.Provider
+	opts := []openai.ProviderOption{
+		openai.WithAPIKey(config.APIKey),
+		openai.WithProviderName(providerName),
+		openai.WithExtraBody(configExtraBody(config)),
+		openai.WithHTTPDoer(doer),
+	}
+	if config.BaseURL != "" {
+		opts = append(opts, openai.WithBaseURL(config.BaseURL))
+	}
+	if config.MaxRetries > 0 {
+		opts = append(opts, openai.WithRetry(openai.RetryConfig{
+			MaxRetries:     config.MaxRetries,
+			InitialBackoff: config.InitialBackoff,
+			MaxBackoff:     config.MaxBackoff,
+		}))
+	}
+	return openai.NewProvider(opts...).EmbeddingClient(openai.EmbeddingClientConfig{Model: config.Model})
+}
+
 func newOpenAICompatibleClient(config Config, doer HTTPDoer) Client {
 	opts := []compat.Option{
 		compat.WithProviderName(ProviderOpenAICompatible),
@@ -355,6 +438,25 @@ func newQwenClient(config Config, doer HTTPDoer) (Client, error) {
 		return p.ResponsesClient(qwen.ResponsesClientConfig(clientConfig)), nil
 	}
 	return p.ChatClient(clientConfig), nil
+}
+
+func newQwenRerankClient(config Config, doer HTTPDoer) RerankClient {
+	opts := []qwen.ProviderOption{
+		qwen.WithAPIKey(config.APIKey),
+		qwen.WithExtraBody(configExtraBody(config)),
+		qwen.WithHTTPDoer(doer),
+	}
+	if config.BaseURL != "" {
+		opts = append(opts, qwen.WithBaseURL(config.BaseURL))
+	}
+	if config.MaxRetries > 0 {
+		opts = append(opts, qwen.WithRetry(qwen.RetryConfig{
+			MaxRetries:     config.MaxRetries,
+			InitialBackoff: config.InitialBackoff,
+			MaxBackoff:     config.MaxBackoff,
+		}))
+	}
+	return qwen.NewProvider(opts...).RerankClient(qwen.RerankClientConfig{Model: config.Model})
 }
 
 func newDeepSeekClient(config Config, doer HTTPDoer) (Client, error) {

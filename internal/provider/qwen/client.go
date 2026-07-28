@@ -13,10 +13,13 @@ const DefaultBaseURL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 type RetryConfig = compat.RetryConfig
 
 type Provider struct {
-	apiKey    string
-	baseURL   string
-	extraBody map[string]any
-	options   []compat.Option
+	apiKey     string
+	baseURL    string
+	httpClient *http.Client
+	httpDoer   model.HTTPDoer
+	retry      compat.RetryConfig
+	extraBody  map[string]any
+	options    []compat.Option
 }
 
 type ProviderOption func(*Provider)
@@ -40,19 +43,45 @@ func WithBaseURL(baseURL string) ProviderOption {
 }
 
 func WithRetry(config RetryConfig) ProviderOption {
-	return func(p *Provider) { p.options = append(p.options, compat.WithRetry(config)) }
+	return func(p *Provider) {
+		if config.MaxRetries > 0 {
+			p.retry.MaxRetries = config.MaxRetries
+		}
+		if config.InitialBackoff > 0 {
+			p.retry.InitialBackoff = config.InitialBackoff
+		}
+		if config.MaxBackoff > 0 {
+			p.retry.MaxBackoff = config.MaxBackoff
+		}
+		p.options = append(p.options, compat.WithRetry(config))
+	}
 }
 
 func WithHTTPClient(client *http.Client) ProviderOption {
-	return func(p *Provider) { p.options = append(p.options, compat.WithHTTPClient(client)) }
+	return func(p *Provider) {
+		if client != nil {
+			p.httpClient = client
+		}
+		p.options = append(p.options, compat.WithHTTPClient(client))
+	}
 }
 
 func WithHTTPDoer(doer model.HTTPDoer) ProviderOption {
-	return func(p *Provider) { p.options = append(p.options, compat.WithHTTPDoer(doer)) }
+	return func(p *Provider) {
+		if doer != nil {
+			p.httpDoer = doer
+		}
+		p.options = append(p.options, compat.WithHTTPDoer(doer))
+	}
 }
 
 func WithTimeout(timeout time.Duration) ProviderOption {
-	return func(p *Provider) { p.options = append(p.options, compat.WithTimeout(timeout)) }
+	return func(p *Provider) {
+		if timeout > 0 {
+			p.httpClient.Timeout = timeout
+		}
+		p.options = append(p.options, compat.WithTimeout(timeout))
+	}
 }
 
 func WithStreamFirstEventTimeout(timeout time.Duration) ProviderOption {
@@ -65,7 +94,12 @@ func WithExtraBody(extra map[string]any) ProviderOption {
 
 func NewProvider(opts ...ProviderOption) *Provider {
 	p := &Provider{
-		baseURL: DefaultBaseURL,
+		baseURL:    DefaultBaseURL,
+		httpClient: &http.Client{Timeout: 30 * time.Second},
+		retry: compat.RetryConfig{
+			InitialBackoff: 100 * time.Millisecond,
+			MaxBackoff:     time.Second,
+		},
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -73,6 +107,13 @@ func NewProvider(opts ...ProviderOption) *Provider {
 		}
 	}
 	return p
+}
+
+func (p *Provider) resolvedHTTPDoer() model.HTTPDoer {
+	if p.httpDoer != nil {
+		return p.httpDoer
+	}
+	return p.httpClient
 }
 
 func (p *Provider) ChatClient(config ChatClientConfig) model.Client {

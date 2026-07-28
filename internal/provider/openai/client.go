@@ -46,6 +46,7 @@ type Client struct {
 type Provider struct {
 	apiKey                  string
 	baseURL                 string
+	providerName            string
 	httpClient              *http.Client
 	httpDoer                model.HTTPDoer
 	streamFirstEventTimeout time.Duration
@@ -71,6 +72,10 @@ func WithAPIKey(apiKey string) ProviderOption {
 
 func WithBaseURL(baseURL string) ProviderOption {
 	return func(p *Provider) { p.baseURL = baseURL }
+}
+
+func WithProviderName(name string) ProviderOption {
+	return func(p *Provider) { p.providerName = name }
 }
 
 func WithRetry(config RetryConfig) ProviderOption {
@@ -133,7 +138,8 @@ func WithDefaultOptions(options map[string]any) ProviderOption {
 
 func NewProvider(opts ...ProviderOption) *Provider {
 	p := &Provider{
-		baseURL: DefaultBaseURL,
+		baseURL:      DefaultBaseURL,
+		providerName: "openai",
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -179,7 +185,7 @@ func (c *Client) GenerateStream(ctx context.Context, req ModelRequest, handler m
 
 func (p *Provider) modelOptions(config ChatClientConfig) []compat.Option {
 	opts := []compat.Option{
-		compat.WithProviderName("openai"),
+		compat.WithProviderName(p.providerName),
 		compat.WithDefaultModel(config.Model),
 		compat.WithHTTPDoer(p.resolvedHTTPDoer()),
 		compat.WithRetry(p.retry),
