@@ -40,6 +40,9 @@ func (c *Client) generateChatStream(ctx context.Context, req model.ModelRequest,
 	for key, value := range c.mergedBody(req.Options) {
 		body[key] = value
 	}
+	if req.ToolChoice != nil {
+		body["tool_choice"] = openAIChatToolChoice(*req.ToolChoice)
+	}
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("marshal chat request: %w", err)
@@ -61,6 +64,9 @@ func (c *Client) generateResponsesStream(ctx context.Context, req model.ModelReq
 	}
 	for key, value := range c.mergedBody(req.Options) {
 		body[key] = value
+	}
+	if req.ToolChoice != nil {
+		body["tool_choice"] = openAIResponsesToolChoice(*req.ToolChoice)
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {

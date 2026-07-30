@@ -3,6 +3,7 @@ package easyllm
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/kiry163/easyllm/internal/model"
@@ -18,6 +19,7 @@ type Engine struct {
 	maxToolConcurrency    int
 	stopOnToolSuccess     bool
 	stopToolName          string
+	toolChoice            *ToolChoice
 	currentTime           *currentTimeRuntime
 }
 
@@ -52,6 +54,31 @@ func WithInstructions(text string) EngineOption {
 func WithTools(tools ...Tool) EngineOption {
 	return func(e *Engine) {
 		e.tools = append([]Tool(nil), tools...)
+	}
+}
+
+func AutoToolChoice() ToolChoice {
+	return model.NewToolChoice(model.ToolChoiceModeAuto, "")
+}
+
+func RequiredToolChoice() ToolChoice {
+	return model.NewToolChoice(model.ToolChoiceModeRequired, "")
+}
+
+func NoToolChoice() ToolChoice {
+	return model.NewToolChoice(model.ToolChoiceModeNone, "")
+}
+
+func NamedToolChoice(name string) ToolChoice {
+	return model.NewToolChoice(model.ToolChoiceModeNamed, strings.TrimSpace(name))
+}
+
+// WithToolChoice controls tool selection for the first model request of each
+// Run or RunStream. Requests after tool execution use automatic selection.
+func WithToolChoice(choice ToolChoice) EngineOption {
+	return func(e *Engine) {
+		choiceCopy := choice
+		e.toolChoice = &choiceCopy
 	}
 }
 
@@ -161,6 +188,7 @@ func (e *Engine) Run(ctx context.Context, req RunRequest) (*RunResult, error) {
 		maxToolConcurrency:    e.maxToolConcurrency,
 		stopOnToolSuccess:     e.stopOnToolSuccess,
 		stopToolName:          e.stopToolName,
+		toolChoice:            e.toolChoice,
 		requestItems:          e.currentTimeItems(req.CurrentTimeLocation),
 	})
 }
@@ -192,6 +220,7 @@ func (e *Engine) RunStream(ctx context.Context, req RunRequest, handler StreamHa
 		maxToolConcurrency:    e.maxToolConcurrency,
 		stopOnToolSuccess:     e.stopOnToolSuccess,
 		stopToolName:          e.stopToolName,
+		toolChoice:            e.toolChoice,
 		requestItems:          e.currentTimeItems(req.CurrentTimeLocation),
 	})
 }

@@ -58,6 +58,8 @@ type ToolCallItem = model.ToolCallItem
 type ToolResultItem = model.ToolResultItem
 type AssistantOutput = model.AssistantOutput
 type ToolCallOutput = model.ToolCallOutput
+type ToolChoice = model.ToolChoice
+type ToolChoiceMode = model.ToolChoiceMode
 type StreamEventType = model.StreamEventType
 type StreamEvent = model.StreamEvent
 type StreamHandler = model.StreamHandler
@@ -81,6 +83,11 @@ const (
 )
 
 const (
+	ToolChoiceModeAuto     = model.ToolChoiceModeAuto
+	ToolChoiceModeRequired = model.ToolChoiceModeRequired
+	ToolChoiceModeNone     = model.ToolChoiceModeNone
+	ToolChoiceModeNamed    = model.ToolChoiceModeNamed
+
 	StreamEventMessageDelta = model.StreamEventMessageDelta
 	StreamEventToolStart    = model.StreamEventToolStart
 	StreamEventToolFinish   = model.StreamEventToolFinish

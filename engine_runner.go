@@ -17,6 +17,7 @@ type runConfig struct {
 	maxToolConcurrency    int
 	stopOnToolSuccess     bool
 	stopToolName          string
+	toolChoice            *ToolChoice
 	requestItems          []model.InputItem
 }
 
@@ -67,6 +68,9 @@ func prepareToolMap(cfg *runConfig) (map[string]Tool, error) {
 		}
 		toolMap[name] = current
 	}
+	if err := validateToolChoice(cfg.toolChoice, toolMap); err != nil {
+		return nil, err
+	}
 	if !cfg.stopOnToolSuccess {
 		return toolMap, nil
 	}
@@ -78,6 +82,32 @@ func prepareToolMap(cfg *runConfig) (map[string]Tool, error) {
 		return nil, fmt.Errorf("stop tool %q is not registered", cfg.stopToolName)
 	}
 	return toolMap, nil
+}
+
+func validateToolChoice(choice *ToolChoice, tools map[string]Tool) error {
+	if choice == nil {
+		return nil
+	}
+	switch choice.Mode() {
+	case ToolChoiceModeAuto, ToolChoiceModeNone:
+		return nil
+	case ToolChoiceModeRequired:
+		if len(tools) == 0 {
+			return fmt.Errorf("required tool choice needs at least one registered tool")
+		}
+		return nil
+	case ToolChoiceModeNamed:
+		name := strings.TrimSpace(choice.ToolName())
+		if name == "" {
+			return fmt.Errorf("named tool choice requires a tool name")
+		}
+		if _, exists := tools[name]; !exists {
+			return fmt.Errorf("tool choice %q is not registered", name)
+		}
+		return nil
+	default:
+		return fmt.Errorf("invalid tool choice mode %q", choice.Mode())
+	}
 }
 
 func collectToolCalls(resp *ModelResponse, result *RunResult) []model.ToolCallOutput {
@@ -285,7 +315,7 @@ func run(ctx context.Context, client Client, session *Session, metadata map[stri
 	}()
 
 	for iteration := 1; iteration <= cfg.maxModelCalls; iteration++ {
-		modelReq := buildModelRequest(session, metadata, cfg)
+		modelReq := buildModelRequest(session, metadata, cfg, iteration)
 		if cfg.hooks.OnModelRequest != nil {
 			if err := cfg.hooks.OnModelRequest(ModelRequestEvent{
 				Session:  session.Snapshot(),
@@ -382,7 +412,7 @@ func runStream(ctx context.Context, client Client, session *Session, metadata ma
 	}()
 
 	for iteration := 1; iteration <= cfg.maxModelCalls; iteration++ {
-		modelReq := buildModelRequest(session, metadata, cfg)
+		modelReq := buildModelRequest(session, metadata, cfg, iteration)
 		if cfg.hooks.OnModelRequest != nil {
 			if err := cfg.hooks.OnModelRequest(ModelRequestEvent{
 				Session:  session.Snapshot(),
@@ -488,11 +518,20 @@ func runStream(ctx context.Context, client Client, session *Session, metadata ma
 	return retResult, nil
 }
 
-func buildModelRequest(session *Session, metadata map[string]any, cfg runConfig) ModelRequest {
+func buildModelRequest(session *Session, metadata map[string]any, cfg runConfig, iteration int) ModelRequest {
+	var toolChoice *ToolChoice
+	if cfg.toolChoice != nil {
+		choice := AutoToolChoice()
+		if iteration == 1 {
+			choice = *cfg.toolChoice
+		}
+		toolChoice = &choice
+	}
 	return ModelRequest{
-		Input:    inputWithRequestItems(session.ItemsView(), cfg.requestItems),
-		Tools:    definitionsFromTools(cfg.tools),
-		Metadata: cloneMap(metadata),
+		Input:      inputWithRequestItems(session.ItemsView(), cfg.requestItems),
+		Tools:      definitionsFromTools(cfg.tools),
+		ToolChoice: toolChoice,
+		Metadata:   cloneMap(metadata),
 	}
 }
 

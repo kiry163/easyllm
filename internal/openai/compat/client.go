@@ -222,6 +222,9 @@ func (c *Client) generateChat(ctx context.Context, req model.ModelRequest) (*mod
 	for key, value := range c.mergedBody(req.Options) {
 		body[key] = value
 	}
+	if req.ToolChoice != nil {
+		body["tool_choice"] = openAIChatToolChoice(*req.ToolChoice)
+	}
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("marshal chat request: %w", err)
@@ -243,6 +246,9 @@ func (c *Client) generateResponses(ctx context.Context, req model.ModelRequest) 
 	}
 	for key, value := range c.mergedBody(req.Options) {
 		body[key] = value
+	}
+	if req.ToolChoice != nil {
+		body["tool_choice"] = openAIResponsesToolChoice(*req.ToolChoice)
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {
@@ -639,6 +645,28 @@ func openAIResponsesTools(tools []model.ToolDefinition) []map[string]any {
 		out = append(out, function)
 	}
 	return out
+}
+
+func openAIChatToolChoice(choice model.ToolChoice) any {
+	if choice.Mode() != model.ToolChoiceModeNamed {
+		return string(choice.Mode())
+	}
+	return map[string]any{
+		"type": "function",
+		"function": map[string]any{
+			"name": choice.ToolName(),
+		},
+	}
+}
+
+func openAIResponsesToolChoice(choice model.ToolChoice) any {
+	if choice.Mode() != model.ToolChoiceModeNamed {
+		return string(choice.Mode())
+	}
+	return map[string]any{
+		"type": "function",
+		"name": choice.ToolName(),
+	}
 }
 
 func textPartsToString(parts []model.TextPart) string {

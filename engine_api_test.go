@@ -367,6 +367,75 @@ func (c *toolCallingClient) GenerateStream(ctx context.Context, req model.ModelR
 	return nil
 }
 
+func TestToolChoiceAppliesOnlyToFirstModelRequestOfEachRun(t *testing.T) {
+	runTool, err := NewTool[submitArgs](submitTool{})
+	if err != nil {
+		t.Fatalf("NewTool returned error: %v", err)
+	}
+	client := &toolCallingClient{}
+	runtime := NewEngine(client, WithTools(runTool), WithToolChoice(NamedToolChoice("submit")))
+
+	for runIndex := 0; runIndex < 2; runIndex++ {
+		client.calls = 0
+		if _, err := runtime.Run(context.Background(), RunRequest{Input: "submit"}); err != nil {
+			t.Fatalf("Run %d returned error: %v", runIndex+1, err)
+		}
+		first := client.requests[runIndex*2].ToolChoice
+		second := client.requests[runIndex*2+1].ToolChoice
+		if first == nil || first.Mode() != ToolChoiceModeNamed || first.ToolName() != "submit" {
+			t.Fatalf("unexpected first request choice: %#v", first)
+		}
+		if second == nil || second.Mode() != ToolChoiceModeAuto {
+			t.Fatalf("unexpected follow-up request choice: %#v", second)
+		}
+	}
+}
+
+func TestRunStreamToolChoiceReturnsToAutoAfterToolExecution(t *testing.T) {
+	runTool, err := NewTool[submitArgs](submitTool{})
+	if err != nil {
+		t.Fatalf("NewTool returned error: %v", err)
+	}
+	client := &toolCallingClient{}
+	runtime := NewEngine(client, WithTools(runTool), WithToolChoice(RequiredToolChoice()))
+
+	if _, err := runtime.RunStream(context.Background(), RunRequest{Input: "submit"}, nil); err != nil {
+		t.Fatalf("RunStream returned error: %v", err)
+	}
+	if len(client.requests) != 2 {
+		t.Fatalf("expected two model requests, got %d", len(client.requests))
+	}
+	if choice := client.requests[0].ToolChoice; choice == nil || choice.Mode() != ToolChoiceModeRequired {
+		t.Fatalf("unexpected first request choice: %#v", choice)
+	}
+	if choice := client.requests[1].ToolChoice; choice == nil || choice.Mode() != ToolChoiceModeAuto {
+		t.Fatalf("unexpected follow-up request choice: %#v", choice)
+	}
+}
+
+func TestToolChoiceConstructorsReachFirstModelRequest(t *testing.T) {
+	tests := []struct {
+		name   string
+		choice ToolChoice
+		mode   ToolChoiceMode
+	}{
+		{name: "auto", choice: AutoToolChoice(), mode: ToolChoiceModeAuto},
+		{name: "none", choice: NoToolChoice(), mode: ToolChoiceModeNone},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := &captureClient{}
+			_, err := NewEngine(client, WithToolChoice(tt.choice)).Run(context.Background(), RunRequest{Input: "hello"})
+			if err != nil {
+				t.Fatalf("Run returned error: %v", err)
+			}
+			if choice := client.requests[0].ToolChoice; choice == nil || choice.Mode() != tt.mode {
+				t.Fatalf("unexpected tool choice: %#v", choice)
+			}
+		})
+	}
+}
+
 type submitArgs struct {
 	Value string `json:"value" tool:"required"`
 }
@@ -746,6 +815,10 @@ func TestRunRejectsInvalidToolExecutionConfiguration(t *testing.T) {
 		{name: "negative concurrency", options: []EngineOption{WithTools(runTool), WithMaxToolConcurrency(-1)}, want: "max tool concurrency cannot be negative"},
 		{name: "unregistered stop tool", options: []EngineOption{WithTools(runTool), WithStopOnToolSuccessName("missing")}, want: `stop tool "missing" is not registered`},
 		{name: "duplicate tool name", options: []EngineOption{WithTools(runTool, runTool)}, want: `duplicate tool name "submit"`},
+		{name: "required without tools", options: []EngineOption{WithToolChoice(RequiredToolChoice())}, want: "required tool choice needs at least one registered tool"},
+		{name: "empty named tool", options: []EngineOption{WithTools(runTool), WithToolChoice(NamedToolChoice(" "))}, want: "named tool choice requires a tool name"},
+		{name: "unregistered named tool", options: []EngineOption{WithTools(runTool), WithToolChoice(NamedToolChoice("missing"))}, want: `tool choice "missing" is not registered`},
+		{name: "invalid choice", options: []EngineOption{WithTools(runTool), WithToolChoice(ToolChoice{})}, want: `invalid tool choice mode ""`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

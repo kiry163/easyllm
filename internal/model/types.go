@@ -125,12 +125,41 @@ const (
 	UnknownArgumentsIgnore UnknownArgumentPolicy = "ignore"
 )
 
+type ToolChoiceMode string
+
+const (
+	ToolChoiceModeAuto     ToolChoiceMode = "auto"
+	ToolChoiceModeRequired ToolChoiceMode = "required"
+	ToolChoiceModeNone     ToolChoiceMode = "none"
+	ToolChoiceModeNamed    ToolChoiceMode = "named"
+)
+
+// ToolChoice controls how a model may select tools. Its fields are private so
+// callers construct only supported choices through the public helpers.
+type ToolChoice struct {
+	mode     ToolChoiceMode
+	toolName string
+}
+
+func NewToolChoice(mode ToolChoiceMode, toolName string) ToolChoice {
+	return ToolChoice{mode: mode, toolName: toolName}
+}
+
+func (c ToolChoice) Mode() ToolChoiceMode {
+	return c.mode
+}
+
+func (c ToolChoice) ToolName() string {
+	return c.toolName
+}
+
 type ModelRequest struct {
-	Model    string           `json:"model"`
-	Input    []InputItem      `json:"input"`
-	Tools    []ToolDefinition `json:"tools"`
-	Options  map[string]any   `json:"options"`
-	Metadata map[string]any   `json:"metadata"`
+	Model      string           `json:"model"`
+	Input      []InputItem      `json:"input"`
+	Tools      []ToolDefinition `json:"tools"`
+	ToolChoice *ToolChoice      `json:"tool_choice,omitempty"`
+	Options    map[string]any   `json:"options"`
+	Metadata   map[string]any   `json:"metadata"`
 }
 
 type ModelResponse struct {
