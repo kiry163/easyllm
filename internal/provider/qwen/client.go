@@ -25,11 +25,12 @@ type Provider struct {
 type ProviderOption func(*Provider)
 
 type ChatClientConfig struct {
-	Model       string
-	Thinking    *bool
-	Temperature *float64
-	TopP        *float64
-	MaxTokens   *int
+	Model             string
+	Thinking          *bool
+	Temperature       *float64
+	TopP              *float64
+	MaxTokens         *int
+	ParallelToolCalls *bool
 }
 
 type ResponsesClientConfig = ChatClientConfig
@@ -146,6 +147,9 @@ func (p *Provider) model(config ChatClientConfig, transport compat.Transport) mo
 	}
 	if config.MaxTokens != nil {
 		compatOpts = append(compatOpts, compat.WithMaxTokens(*config.MaxTokens))
+	}
+	if config.ParallelToolCalls != nil {
+		compatOpts = append(compatOpts, compat.WithParallelToolCalls(*config.ParallelToolCalls))
 	}
 	if transport == compat.TransportResponses {
 		return compat.NewResponsesClient(p.apiKey, p.baseURL, compatOpts...)

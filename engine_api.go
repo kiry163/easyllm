@@ -9,13 +9,16 @@ import (
 )
 
 type Engine struct {
-	client            Client
-	instructions      string
-	tools             []Tool
-	hooks             Hooks
-	maxModelCalls     int
-	stopAfterToolCall bool
-	currentTime       *currentTimeRuntime
+	client                Client
+	instructions          string
+	tools                 []Tool
+	hooks                 Hooks
+	maxModelCalls         int
+	parallelToolExecution bool
+	maxToolConcurrency    int
+	stopOnToolSuccess     bool
+	stopToolName          string
+	currentTime           *currentTimeRuntime
 }
 
 // CurrentTimeConfig controls the time context injected by an Engine.
@@ -66,9 +69,40 @@ func WithMaxModelCalls(n int) EngineOption {
 	}
 }
 
-func WithStopAfterToolCall(stop bool) EngineOption {
+// WithParallelToolExecution controls whether tool calls from one model response
+// may execute concurrently. Parallel execution is enabled by default.
+func WithParallelToolExecution(enabled bool) EngineOption {
 	return func(e *Engine) {
-		e.stopAfterToolCall = stop
+		e.parallelToolExecution = enabled
+	}
+}
+
+// WithMaxToolConcurrency limits concurrent tool executions within one Run.
+// Zero means no limit beyond the number of calls in the current tool batch.
+func WithMaxToolConcurrency(n int) EngineOption {
+	return func(e *Engine) {
+		e.maxToolConcurrency = n
+	}
+}
+
+// WithStopOnToolSuccess stops before the next model request when tool succeeds.
+// All tool calls in the current model-response batch are completed first.
+func WithStopOnToolSuccess(tool Tool) EngineOption {
+	return func(e *Engine) {
+		e.stopOnToolSuccess = true
+		if tool == nil {
+			e.stopToolName = ""
+			return
+		}
+		e.stopToolName = tool.Definition().Name
+	}
+}
+
+// WithStopOnToolSuccessName is the name-based form of WithStopOnToolSuccess.
+func WithStopOnToolSuccessName(name string) EngineOption {
+	return func(e *Engine) {
+		e.stopOnToolSuccess = true
+		e.stopToolName = name
 	}
 }
 
@@ -88,8 +122,9 @@ func WithCurrentTime(config CurrentTimeConfig) EngineOption {
 
 func NewEngine(client Client, opts ...EngineOption) *Engine {
 	engine := &Engine{
-		client:        client,
-		maxModelCalls: 3,
+		client:                client,
+		maxModelCalls:         3,
+		parallelToolExecution: true,
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -119,11 +154,14 @@ func (e *Engine) Run(ctx context.Context, req RunRequest) (*RunResult, error) {
 		session.AppendUserContent(req.InputParts...)
 	}
 	return run(ctx, e.client, session, req.Metadata, runConfig{
-		tools:             e.tools,
-		hooks:             e.hooks,
-		maxModelCalls:     e.maxModelCalls,
-		stopAfterToolCall: e.stopAfterToolCall,
-		requestItems:      e.currentTimeItems(req.CurrentTimeLocation),
+		tools:                 e.tools,
+		hooks:                 e.hooks,
+		maxModelCalls:         e.maxModelCalls,
+		parallelToolExecution: e.parallelToolExecution,
+		maxToolConcurrency:    e.maxToolConcurrency,
+		stopOnToolSuccess:     e.stopOnToolSuccess,
+		stopToolName:          e.stopToolName,
+		requestItems:          e.currentTimeItems(req.CurrentTimeLocation),
 	})
 }
 
@@ -147,11 +185,14 @@ func (e *Engine) RunStream(ctx context.Context, req RunRequest, handler StreamHa
 		session.AppendUserContent(req.InputParts...)
 	}
 	return runStream(ctx, e.client, session, req.Metadata, handler, runConfig{
-		tools:             e.tools,
-		hooks:             e.hooks,
-		maxModelCalls:     e.maxModelCalls,
-		stopAfterToolCall: e.stopAfterToolCall,
-		requestItems:      e.currentTimeItems(req.CurrentTimeLocation),
+		tools:                 e.tools,
+		hooks:                 e.hooks,
+		maxModelCalls:         e.maxModelCalls,
+		parallelToolExecution: e.parallelToolExecution,
+		maxToolConcurrency:    e.maxToolConcurrency,
+		stopOnToolSuccess:     e.stopOnToolSuccess,
+		stopToolName:          e.stopToolName,
+		requestItems:          e.currentTimeItems(req.CurrentTimeLocation),
 	})
 }
 

@@ -10,10 +10,11 @@ const (
 )
 
 type StreamEvent struct {
-	Type     StreamEventType
-	Text     string
-	ToolName string
-	Raw      any
+	Type       StreamEventType
+	Text       string
+	ToolName   string
+	ToolCallID string
+	Raw        any
 }
 
 type StreamHandler func(StreamEvent) error

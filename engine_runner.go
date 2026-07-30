@@ -3,23 +3,28 @@ package easyllm
 import (
 	"context"
 	"fmt"
+	"strings"
+	"sync"
 
 	"github.com/kiry163/easyllm/internal/model"
 )
 
 type runConfig struct {
-	tools             []Tool
-	hooks             Hooks
-	maxModelCalls     int
-	stopAfterToolCall bool
-	requestItems      []model.InputItem
+	tools                 []Tool
+	hooks                 Hooks
+	maxModelCalls         int
+	parallelToolExecution bool
+	maxToolConcurrency    int
+	stopOnToolSuccess     bool
+	stopToolName          string
+	requestItems          []model.InputItem
 }
 
 type StopReason string
 
 const (
 	StopReasonStop                   StopReason = "stop"
-	StopReasonStopOnToolResult       StopReason = "stop_on_tool_result"
+	StopReasonToolSucceeded          StopReason = "tool_succeeded"
 	StopReasonModelCallLimitExceeded StopReason = "model_call_limit_exceeded"
 )
 
@@ -40,6 +45,210 @@ type ToolCallResult struct {
 	Err    error                `json:"err"`
 }
 
+type toolExecution struct {
+	call    model.ToolCallOutput
+	result  ToolResult
+	err     error
+	content string
+}
+
+func prepareToolMap(cfg *runConfig) (map[string]Tool, error) {
+	if cfg.maxToolConcurrency < 0 {
+		return nil, fmt.Errorf("max tool concurrency cannot be negative")
+	}
+	toolMap := make(map[string]Tool, len(cfg.tools))
+	for _, current := range cfg.tools {
+		if current == nil {
+			continue
+		}
+		name := current.Definition().Name
+		if _, exists := toolMap[name]; exists {
+			return nil, fmt.Errorf("duplicate tool name %q", name)
+		}
+		toolMap[name] = current
+	}
+	if !cfg.stopOnToolSuccess {
+		return toolMap, nil
+	}
+	cfg.stopToolName = strings.TrimSpace(cfg.stopToolName)
+	if cfg.stopToolName == "" {
+		return nil, fmt.Errorf("stop tool name is required")
+	}
+	if _, exists := toolMap[cfg.stopToolName]; !exists {
+		return nil, fmt.Errorf("stop tool %q is not registered", cfg.stopToolName)
+	}
+	return toolMap, nil
+}
+
+func collectToolCalls(resp *ModelResponse, result *RunResult) []model.ToolCallOutput {
+	var calls []model.ToolCallOutput
+	for _, item := range resp.Output {
+		out, ok := item.(model.AssistantOutput)
+		if !ok {
+			continue
+		}
+		if len(out.Content) > 0 {
+			result.OutputText = out.Content[len(out.Content)-1].Text
+		}
+		calls = append(calls, out.ToolCalls...)
+	}
+	return calls
+}
+
+func processToolBatch(
+	ctx context.Context,
+	session *Session,
+	result *RunResult,
+	calls []model.ToolCallOutput,
+	toolMap map[string]Tool,
+	iteration int,
+	metadata map[string]any,
+	handler StreamHandler,
+	cfg runConfig,
+) (bool, error) {
+	result.ToolCallCount += len(calls)
+	for _, call := range calls {
+		if cfg.hooks.OnToolCallStart != nil {
+			if err := cfg.hooks.OnToolCallStart(ToolCallStartEvent{
+				Session:  session.Snapshot(),
+				Call:     call,
+				Metadata: cloneMap(metadata),
+			}); err != nil {
+				return false, newEngineError(EngineErrorHook, "on_tool_call_start", err)
+			}
+		}
+		if handler != nil {
+			if err := handler(StreamEvent{
+				Type:       StreamEventToolStart,
+				ToolName:   call.Name,
+				ToolCallID: call.CallID,
+			}); err != nil {
+				return false, newEngineError(EngineErrorHandler, "stream_handler", err)
+			}
+		}
+	}
+
+	executions := invokeToolBatch(ctx, calls, toolMap, iteration, metadata, cfg)
+	stopTriggered := false
+	for _, execution := range executions {
+		result.ToolResults = append(result.ToolResults, ToolCallResult{
+			Call:   execution.call,
+			Result: execution.result,
+			Err:    execution.err,
+		})
+		session.AppendItems(model.ToolResultItem{
+			CallID:  execution.call.CallID,
+			Name:    execution.call.Name,
+			Content: execution.content,
+		})
+		if cfg.hooks.OnToolCallFinish != nil {
+			event := ToolCallFinishEvent{
+				Session:  session.Snapshot(),
+				Call:     execution.call,
+				Metadata: cloneMap(metadata),
+			}
+			if execution.err != nil {
+				event.Err = execution.err
+			} else {
+				outcome := execution.result
+				event.Result = &outcome
+			}
+			if err := cfg.hooks.OnToolCallFinish(event); err != nil {
+				return false, newEngineError(EngineErrorHook, "on_tool_call_finish", err)
+			}
+		}
+		if handler != nil {
+			if err := handler(StreamEvent{
+				Type:       StreamEventToolFinish,
+				ToolName:   execution.call.Name,
+				ToolCallID: execution.call.CallID,
+			}); err != nil {
+				return false, newEngineError(EngineErrorHandler, "stream_handler", err)
+			}
+		}
+		if cfg.stopOnToolSuccess && execution.call.Name == cfg.stopToolName && execution.err == nil {
+			stopTriggered = true
+		}
+	}
+	return stopTriggered, nil
+}
+
+func invokeToolBatch(
+	ctx context.Context,
+	calls []model.ToolCallOutput,
+	toolMap map[string]Tool,
+	iteration int,
+	metadata map[string]any,
+	cfg runConfig,
+) []toolExecution {
+	executions := make([]toolExecution, len(calls))
+	limit := 1
+	if cfg.parallelToolExecution {
+		limit = len(calls)
+		if cfg.maxToolConcurrency > 0 && cfg.maxToolConcurrency < limit {
+			limit = cfg.maxToolConcurrency
+		}
+	}
+	if limit <= 1 {
+		for index, call := range calls {
+			executions[index] = invokeTool(ctx, call, toolMap, iteration, metadata)
+		}
+		return executions
+	}
+
+	jobs := make(chan int)
+	var workers sync.WaitGroup
+	workers.Add(limit)
+	for range limit {
+		go func() {
+			defer workers.Done()
+			for index := range jobs {
+				executions[index] = invokeTool(ctx, calls[index], toolMap, iteration, metadata)
+			}
+		}()
+	}
+	for index := range calls {
+		jobs <- index
+	}
+	close(jobs)
+	workers.Wait()
+	return executions
+}
+
+func invokeTool(
+	ctx context.Context,
+	call model.ToolCallOutput,
+	toolMap map[string]Tool,
+	iteration int,
+	metadata map[string]any,
+) toolExecution {
+	execution := toolExecution{call: call}
+	runTool := toolMap[call.Name]
+	if runTool == nil {
+		execution.err = NewPayloadError("tool not found", map[string]any{
+			"status":  "error",
+			"code":    "tool_not_found",
+			"tool":    call.Name,
+			"message": fmt.Sprintf("tool %q not found", call.Name),
+		})
+		execution.content = encodeToolError(call.Name, execution.err)
+		return execution
+	}
+	execution.result, execution.err = runTool.Invoke(ctx, ToolCallContext{
+		CallID:       call.CallID,
+		Name:         call.Name,
+		Iteration:    iteration,
+		Metadata:     cloneMap(metadata),
+		RawArguments: call.RawArguments,
+	})
+	if execution.err != nil {
+		execution.content = encodeToolError(call.Name, execution.err)
+	} else {
+		execution.content = encodeToolSuccess(call.Name, execution.result)
+	}
+	return execution
+}
+
 func run(ctx context.Context, client Client, session *Session, metadata map[string]any, cfg runConfig) (retResult *RunResult, retErr error) {
 	if session == nil {
 		return nil, newEngineError(EngineErrorInvalidRequest, "run", fmt.Errorf("session is required"))
@@ -49,6 +258,10 @@ func run(ctx context.Context, client Client, session *Session, metadata map[stri
 	}
 	if cfg.maxModelCalls <= 0 {
 		cfg.maxModelCalls = 3
+	}
+	toolMap, err := prepareToolMap(&cfg)
+	if err != nil {
+		return nil, newEngineError(EngineErrorInvalidRequest, "run_config", err)
 	}
 	if cfg.hooks.OnRunStart != nil {
 		if err := cfg.hooks.OnRunStart(RunStartEvent{Session: session.Snapshot(), Metadata: cloneMap(metadata)}); err != nil {
@@ -70,14 +283,6 @@ func run(ctx context.Context, client Client, session *Session, metadata map[stri
 			}
 		}
 	}()
-
-	toolMap := make(map[string]Tool, len(cfg.tools))
-	for _, current := range cfg.tools {
-		if current == nil {
-			continue
-		}
-		toolMap[current.Definition().Name] = current
-	}
 
 	for iteration := 1; iteration <= cfg.maxModelCalls; iteration++ {
 		modelReq := buildModelRequest(session, metadata, cfg)
@@ -115,104 +320,20 @@ func run(ctx context.Context, client Client, session *Session, metadata map[stri
 			}
 		}
 
-		hasToolCalls := false
-		for _, item := range resp.Output {
-			switch out := item.(type) {
-			case model.AssistantOutput:
-				if len(out.Content) > 0 {
-					result.OutputText = out.Content[len(out.Content)-1].Text
-				}
-				for _, call := range out.ToolCalls {
-					hasToolCalls = true
-					result.ToolCallCount++
-					if cfg.hooks.OnToolCallStart != nil {
-						if err := cfg.hooks.OnToolCallStart(ToolCallStartEvent{
-							Session:  session.Snapshot(),
-							Call:     call,
-							Metadata: cloneMap(metadata),
-						}); err != nil {
-							retErr = newEngineError(EngineErrorHook, "on_tool_call_start", err)
-							return nil, retErr
-						}
-					}
-					runTool := toolMap[call.Name]
-					if runTool == nil {
-						toolErr := NewPayloadError("tool not found", map[string]any{
-							"status":  "error",
-							"code":    "tool_not_found",
-							"tool":    call.Name,
-							"message": fmt.Sprintf("tool %q not found", call.Name),
-						})
-						session.AppendItems(model.ToolResultItem{
-							CallID:  call.CallID,
-							Name:    call.Name,
-							Content: encodeToolError(call.Name, toolErr),
-						})
-						if cfg.hooks.OnToolCallFinish != nil {
-							if err := cfg.hooks.OnToolCallFinish(ToolCallFinishEvent{
-								Session:  session.Snapshot(),
-								Call:     call,
-								Err:      toolErr,
-								Metadata: cloneMap(metadata),
-							}); err != nil {
-								retErr = newEngineError(EngineErrorHook, "on_tool_call_finish", err)
-								return nil, retErr
-							}
-						}
-						continue
-					}
-					outcome, invokeErr := runTool.Invoke(ctx, ToolCallContext{
-						CallID:       call.CallID,
-						Name:         call.Name,
-						Iteration:    iteration,
-						Metadata:     cloneMap(metadata),
-						RawArguments: call.RawArguments,
-					})
-					result.ToolResults = append(result.ToolResults, ToolCallResult{
-						Call:   call,
-						Result: outcome,
-						Err:    invokeErr,
-					})
-					message := ""
-					if invokeErr != nil {
-						message = encodeToolError(call.Name, invokeErr)
-					} else {
-						message = encodeToolSuccess(call.Name, outcome)
-					}
-					session.AppendItems(model.ToolResultItem{
-						CallID:  call.CallID,
-						Name:    call.Name,
-						Content: message,
-					})
-					if cfg.hooks.OnToolCallFinish != nil {
-						event := ToolCallFinishEvent{
-							Session:  session.Snapshot(),
-							Call:     call,
-							Metadata: cloneMap(metadata),
-						}
-						if invokeErr != nil {
-							event.Err = invokeErr
-						} else {
-							copyOutcome := outcome
-							event.Result = &copyOutcome
-						}
-						if err := cfg.hooks.OnToolCallFinish(event); err != nil {
-							retErr = newEngineError(EngineErrorHook, "on_tool_call_finish", err)
-							return nil, retErr
-						}
-					}
-					if invokeErr == nil && cfg.stopAfterToolCall {
-						result.StopReason = StopReasonStopOnToolResult
-						result.Session = session.Snapshot()
-						retResult = result
-						return retResult, nil
-					}
-				}
-			}
-		}
-
-		if !hasToolCalls {
+		calls := collectToolCalls(resp, result)
+		if len(calls) == 0 {
 			result.StopReason = StopReasonStop
+			result.Session = session.Snapshot()
+			retResult = result
+			return retResult, nil
+		}
+		stopTriggered, err := processToolBatch(ctx, session, result, calls, toolMap, iteration, metadata, nil, cfg)
+		if err != nil {
+			retErr = err
+			return nil, retErr
+		}
+		if stopTriggered {
+			result.StopReason = StopReasonToolSucceeded
 			result.Session = session.Snapshot()
 			retResult = result
 			return retResult, nil
@@ -235,6 +356,10 @@ func runStream(ctx context.Context, client Client, session *Session, metadata ma
 	if cfg.maxModelCalls <= 0 {
 		cfg.maxModelCalls = 3
 	}
+	toolMap, err := prepareToolMap(&cfg)
+	if err != nil {
+		return nil, newEngineError(EngineErrorInvalidRequest, "run_config", err)
+	}
 	if cfg.hooks.OnRunStart != nil {
 		if err := cfg.hooks.OnRunStart(RunStartEvent{Session: session.Snapshot(), Metadata: cloneMap(metadata)}); err != nil {
 			return nil, newEngineError(EngineErrorHook, "on_run_start", err)
@@ -255,14 +380,6 @@ func runStream(ctx context.Context, client Client, session *Session, metadata ma
 			}
 		}
 	}()
-
-	toolMap := make(map[string]Tool, len(cfg.tools))
-	for _, current := range cfg.tools {
-		if current == nil {
-			continue
-		}
-		toolMap[current.Definition().Name] = current
-	}
 
 	for iteration := 1; iteration <= cfg.maxModelCalls; iteration++ {
 		modelReq := buildModelRequest(session, metadata, cfg)
@@ -327,128 +444,26 @@ func runStream(ctx context.Context, client Client, session *Session, metadata ma
 			}
 		}
 
-		hasToolCalls := false
-		for _, item := range resp.Output {
-			switch out := item.(type) {
-			case model.AssistantOutput:
-				if len(out.Content) > 0 {
-					result.OutputText = out.Content[len(out.Content)-1].Text
-				}
-				for _, call := range out.ToolCalls {
-					hasToolCalls = true
-					result.ToolCallCount++
-					if cfg.hooks.OnToolCallStart != nil {
-						if err := cfg.hooks.OnToolCallStart(ToolCallStartEvent{
-							Session:  session.Snapshot(),
-							Call:     call,
-							Metadata: cloneMap(metadata),
-						}); err != nil {
-							retErr = newEngineError(EngineErrorHook, "on_tool_call_start", err)
-							return nil, retErr
-						}
-					}
-					if handler != nil {
-						if err := handler(StreamEvent{Type: StreamEventToolStart, ToolName: call.Name}); err != nil {
-							retErr = newEngineError(EngineErrorHandler, "stream_handler", err)
-							return nil, retErr
-						}
-					}
-					runTool := toolMap[call.Name]
-					if runTool == nil {
-						toolErr := NewPayloadError("tool not found", map[string]any{
-							"status":  "error",
-							"code":    "tool_not_found",
-							"tool":    call.Name,
-							"message": fmt.Sprintf("tool %q not found", call.Name),
-						})
-						session.AppendItems(model.ToolResultItem{
-							CallID:  call.CallID,
-							Name:    call.Name,
-							Content: encodeToolError(call.Name, toolErr),
-						})
-						if cfg.hooks.OnToolCallFinish != nil {
-							if err := cfg.hooks.OnToolCallFinish(ToolCallFinishEvent{
-								Session:  session.Snapshot(),
-								Call:     call,
-								Err:      toolErr,
-								Metadata: cloneMap(metadata),
-							}); err != nil {
-								retErr = newEngineError(EngineErrorHook, "on_tool_call_finish", err)
-								return nil, retErr
-							}
-						}
-						if handler != nil {
-							if err := handler(StreamEvent{Type: StreamEventToolFinish, ToolName: call.Name}); err != nil {
-								retErr = newEngineError(EngineErrorHandler, "stream_handler", err)
-								return nil, retErr
-							}
-						}
-						continue
-					}
-					outcome, invokeErr := runTool.Invoke(ctx, ToolCallContext{
-						CallID:       call.CallID,
-						Name:         call.Name,
-						Iteration:    iteration,
-						Metadata:     cloneMap(metadata),
-						RawArguments: call.RawArguments,
-					})
-					result.ToolResults = append(result.ToolResults, ToolCallResult{
-						Call:   call,
-						Result: outcome,
-						Err:    invokeErr,
-					})
-					message := ""
-					if invokeErr != nil {
-						message = encodeToolError(call.Name, invokeErr)
-					} else {
-						message = encodeToolSuccess(call.Name, outcome)
-					}
-					session.AppendItems(model.ToolResultItem{
-						CallID:  call.CallID,
-						Name:    call.Name,
-						Content: message,
-					})
-					if cfg.hooks.OnToolCallFinish != nil {
-						event := ToolCallFinishEvent{
-							Session:  session.Snapshot(),
-							Call:     call,
-							Metadata: cloneMap(metadata),
-						}
-						if invokeErr != nil {
-							event.Err = invokeErr
-						} else {
-							copyOutcome := outcome
-							event.Result = &copyOutcome
-						}
-						if err := cfg.hooks.OnToolCallFinish(event); err != nil {
-							retErr = newEngineError(EngineErrorHook, "on_tool_call_finish", err)
-							return nil, retErr
-						}
-					}
-					if handler != nil {
-						if err := handler(StreamEvent{Type: StreamEventToolFinish, ToolName: call.Name}); err != nil {
-							retErr = newEngineError(EngineErrorHandler, "stream_handler", err)
-							return nil, retErr
-						}
-					}
-					if invokeErr == nil && cfg.stopAfterToolCall {
-						result.StopReason = StopReasonStopOnToolResult
-						result.Session = session.Snapshot()
-						if handler != nil {
-							if err := handler(StreamEvent{Type: StreamEventDone}); err != nil {
-								retErr = newEngineError(EngineErrorHandler, "stream_handler", err)
-								return nil, retErr
-							}
-						}
-						retResult = result
-						return retResult, nil
-					}
+		calls := collectToolCalls(resp, result)
+		if len(calls) == 0 {
+			result.StopReason = StopReasonStop
+			result.Session = session.Snapshot()
+			if handler != nil {
+				if err := handler(StreamEvent{Type: StreamEventDone}); err != nil {
+					retErr = newEngineError(EngineErrorHandler, "stream_handler", err)
+					return nil, retErr
 				}
 			}
+			retResult = result
+			return retResult, nil
 		}
-
-		if !hasToolCalls {
-			result.StopReason = StopReasonStop
+		stopTriggered, err := processToolBatch(ctx, session, result, calls, toolMap, iteration, metadata, handler, cfg)
+		if err != nil {
+			retErr = err
+			return nil, retErr
+		}
+		if stopTriggered {
+			result.StopReason = StopReasonToolSucceeded
 			result.Session = session.Snapshot()
 			if handler != nil {
 				if err := handler(StreamEvent{Type: StreamEventDone}); err != nil {

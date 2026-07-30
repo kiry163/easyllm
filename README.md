@@ -500,6 +500,35 @@ engine := easyllm.NewEngine(
 )
 ```
 
+Model-side and local tool parallelism are configured separately. `ParallelToolCalls`
+controls whether an OpenAI-compatible model may return multiple calls in one
+response; `nil` preserves the provider default. The engine executes a returned
+batch concurrently by default, with `0` meaning no additional per-Run limit.
+
+```go
+allowParallelCalls := true
+client, err := easyllm.NewClient(easyllm.Config{
+	Provider:          easyllm.ProviderOpenAI,
+	APIKey:            apiKey,
+	Model:             "gpt-5",
+	ParallelToolCalls: &allowParallelCalls,
+})
+
+engine := easyllm.NewEngine(
+	client,
+	easyllm.WithTools(weatherTool),
+	easyllm.WithParallelToolExecution(true),
+	easyllm.WithMaxToolConcurrency(4),
+	easyllm.WithStopOnToolSuccess(weatherTool),
+)
+```
+
+`WithParallelToolExecution(false)` forces serial execution without changing the
+model request. A stop-on-success condition is evaluated after every call in the
+current model-response batch has completed, so already accepted calls are never
+discarded. Tool implementations may therefore be invoked concurrently, including
+multiple invocations of the same tool instance, and must protect mutable state.
+
 Tool arguments are collected as raw provider strings and repaired once the registered tool's Go type is known. Unknown arguments are rejected by default; tools can choose `UnknownArgumentsWarn` or `UnknownArgumentsIgnore`. Warning details, the original arguments, and the selected repair strategy are available from `ToolCallContext`. Tool errors are returned to the model as structured tool results and are also recorded in `RunResult.ToolResults`.
 
 When upgrading, move any `tool:"name=..."` field name to the field's `json` tag. Custom `Tool` implementations now receive raw arguments through `ToolCallContext.RawArguments`, so `Tool.Invoke` no longer accepts a separate argument map. `ToolCallOutput` and `ToolCallItem` likewise expose `RawArguments` instead of parsed `Arguments` or `Repaired` fields.
@@ -541,7 +570,7 @@ fmt.Println(second.OutputText)
 Stable stop reason constants:
 
 - `easyllm.StopReasonStop`
-- `easyllm.StopReasonStopOnToolResult`
+- `easyllm.StopReasonToolSucceeded`
 - `easyllm.StopReasonModelCallLimitExceeded`
 
 `RunResult` includes the final output text, model-call count, tool-call count, network retry count, tool results, a session snapshot, and usage for the current run. `RetryCount` counts provider-level network retries and does not include the first request attempt.

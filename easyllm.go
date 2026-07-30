@@ -96,6 +96,10 @@ type Config struct {
 	Temperature *float64
 	TopP        *float64
 	MaxTokens   *int
+	// ParallelToolCalls controls whether the model may return multiple tool
+	// calls in one response. Nil preserves the provider default. This does not
+	// control whether the Engine executes returned calls concurrently.
+	ParallelToolCalls *bool
 	// EnableThinking is a provider-neutral reasoning switch. Providers map it to
 	// their request-body field when supported.
 	EnableThinking          *bool
@@ -284,10 +288,11 @@ func newOpenAIClient(config Config, doer HTTPDoer) Client {
 	}
 	p := openai.NewProvider(opts...)
 	clientConfig := openai.ChatClientConfig{
-		Model:       config.Model,
-		Temperature: config.Temperature,
-		TopP:        config.TopP,
-		MaxTokens:   config.MaxTokens,
+		Model:             config.Model,
+		Temperature:       config.Temperature,
+		TopP:              config.TopP,
+		MaxTokens:         config.MaxTokens,
+		ParallelToolCalls: config.ParallelToolCalls,
 	}
 	if transportOrDefault(config.Transport) == TransportResponses {
 		return p.ResponsesClient(openai.ResponsesClientConfig(clientConfig))
@@ -396,6 +401,9 @@ func newOpenAICompatibleClient(config Config, doer HTTPDoer) Client {
 	if config.MaxTokens != nil {
 		opts = append(opts, compat.WithMaxTokens(*config.MaxTokens))
 	}
+	if config.ParallelToolCalls != nil {
+		opts = append(opts, compat.WithParallelToolCalls(*config.ParallelToolCalls))
+	}
 	if transportOrDefault(config.Transport) == TransportResponses {
 		return compat.NewResponsesClient(config.APIKey, config.BaseURL, opts...)
 	}
@@ -428,11 +436,12 @@ func newQwenClient(config Config, doer HTTPDoer) (Client, error) {
 	}
 	p := qwen.NewProvider(opts...)
 	clientConfig := qwen.ChatClientConfig{
-		Model:       config.Model,
-		Thinking:    thinking,
-		Temperature: config.Temperature,
-		TopP:        config.TopP,
-		MaxTokens:   config.MaxTokens,
+		Model:             config.Model,
+		Thinking:          thinking,
+		Temperature:       config.Temperature,
+		TopP:              config.TopP,
+		MaxTokens:         config.MaxTokens,
+		ParallelToolCalls: config.ParallelToolCalls,
 	}
 	if transportOrDefault(config.Transport) == TransportResponses {
 		return p.ResponsesClient(qwen.ResponsesClientConfig(clientConfig)), nil
@@ -484,11 +493,12 @@ func newDeepSeekClient(config Config, doer HTTPDoer) (Client, error) {
 	}
 	p := deepseek.NewProvider(opts...)
 	clientConfig := deepseek.ChatClientConfig{
-		Thinking:    config.EnableThinking,
-		Model:       config.Model,
-		Temperature: config.Temperature,
-		TopP:        config.TopP,
-		MaxTokens:   config.MaxTokens,
+		Thinking:          config.EnableThinking,
+		Model:             config.Model,
+		Temperature:       config.Temperature,
+		TopP:              config.TopP,
+		MaxTokens:         config.MaxTokens,
+		ParallelToolCalls: config.ParallelToolCalls,
 	}
 	return p.ChatClient(clientConfig), nil
 }

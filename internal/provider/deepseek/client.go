@@ -22,11 +22,12 @@ type Provider struct {
 type ProviderOption func(*Provider)
 
 type ChatClientConfig struct {
-	Thinking    *bool
-	Model       string
-	Temperature *float64
-	TopP        *float64
-	MaxTokens   *int
+	Thinking          *bool
+	Model             string
+	Temperature       *float64
+	TopP              *float64
+	MaxTokens         *int
+	ParallelToolCalls *bool
 }
 
 func WithAPIKey(apiKey string) ProviderOption {
@@ -89,6 +90,9 @@ func (p *Provider) ChatClient(config ChatClientConfig) model.Client {
 	}
 	if config.MaxTokens != nil {
 		opts = append(opts, compat.WithMaxTokens(*config.MaxTokens))
+	}
+	if config.ParallelToolCalls != nil {
+		opts = append(opts, compat.WithParallelToolCalls(*config.ParallelToolCalls))
 	}
 	return compat.NewChatClient(p.apiKey, p.baseURL, opts...)
 }

@@ -41,6 +41,7 @@ type Client struct {
 	transport               Transport
 	extraBody               map[string]any
 	defaultOptions          map[string]any
+	parallelToolCalls       *bool
 }
 
 var ErrStreamFirstEventTimeout = errors.New("stream first event timeout")
@@ -136,6 +137,12 @@ func WithMaxTokens(value int) Option {
 	}
 }
 
+func WithParallelToolCalls(enabled bool) Option {
+	return func(c *Client) {
+		c.parallelToolCalls = &enabled
+	}
+}
+
 func WithProviderName(name string) Option {
 	return func(c *Client) {
 		c.providerName = strings.TrimSpace(name)
@@ -208,6 +215,9 @@ func (c *Client) generateChat(ctx context.Context, req model.ModelRequest) (*mod
 	if len(req.Tools) > 0 {
 		body["tools"] = openAIChatTools(req.Tools)
 		body["tool_choice"] = "auto"
+		if c.parallelToolCalls != nil {
+			body["parallel_tool_calls"] = *c.parallelToolCalls
+		}
 	}
 	for key, value := range c.mergedBody(req.Options) {
 		body[key] = value
@@ -226,6 +236,9 @@ func (c *Client) generateResponses(ctx context.Context, req model.ModelRequest) 
 	}
 	if len(req.Tools) > 0 {
 		body["tools"] = openAIResponsesTools(req.Tools)
+		if c.parallelToolCalls != nil {
+			body["parallel_tool_calls"] = *c.parallelToolCalls
+		}
 		// keep room for compat expansion; not all providers accept this on responses yet
 	}
 	for key, value := range c.mergedBody(req.Options) {

@@ -28,6 +28,148 @@ func TestNewClientBuildsOpenAIClient(t *testing.T) {
 	}
 }
 
+func TestNewClientMapsParallelToolCallsAcrossProviders(t *testing.T) {
+	enabled := true
+	for _, provider := range []string{ProviderOpenAI, ProviderOpenAICompatible, ProviderQwen, ProviderDeepSeek} {
+		t.Run(provider, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				defer r.Body.Close()
+				var body map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Fatalf("decode request body: %v", err)
+				}
+				if body["parallel_tool_calls"] != true {
+					t.Fatalf("expected parallel_tool_calls=true, got %#v", body["parallel_tool_calls"])
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"choices": []map[string]any{{
+						"message":       map[string]any{"content": "done"},
+						"finish_reason": "stop",
+					}},
+				})
+			}))
+			defer server.Close()
+
+			client, err := NewClient(Config{
+				Provider:          provider,
+				APIKey:            "token",
+				BaseURL:           server.URL,
+				Model:             "test-model",
+				ParallelToolCalls: &enabled,
+			})
+			if err != nil {
+				t.Fatalf("NewClient returned error: %v", err)
+			}
+			_, err = client.Generate(context.Background(), ModelRequest{
+				Input: []InputItem{UserMessageItem{Content: []TextPart{{Text: "hello"}}}},
+				Tools: []ToolDefinition{{Name: "submit", Parameters: map[string]any{"type": "object"}}},
+			})
+			if err != nil {
+				t.Fatalf("Generate returned error: %v", err)
+			}
+		})
+	}
+}
+
+func TestParallelToolCallsTriStateAndExtraBodyOverride(t *testing.T) {
+	enabled := true
+	disabled := false
+	tests := []struct {
+		name       string
+		configured *bool
+		extraBody  map[string]any
+		withTools  bool
+		wantValue  any
+		wantField  bool
+	}{
+		{name: "unset", withTools: true, wantField: false},
+		{name: "enabled", configured: &enabled, withTools: true, wantField: true, wantValue: true},
+		{name: "disabled", configured: &disabled, withTools: true, wantField: true, wantValue: false},
+		{name: "without tools", configured: &enabled, wantField: false},
+		{name: "extra body overrides", configured: &enabled, extraBody: map[string]any{"parallel_tool_calls": false}, withTools: true, wantField: true, wantValue: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				defer r.Body.Close()
+				var body map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Fatalf("decode request body: %v", err)
+				}
+				value, exists := body["parallel_tool_calls"]
+				if exists != tt.wantField || exists && value != tt.wantValue {
+					t.Fatalf("unexpected parallel_tool_calls: exists=%v value=%#v", exists, value)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"choices": []map[string]any{{"message": map[string]any{"content": "done"}, "finish_reason": "stop"}},
+				})
+			}))
+			defer server.Close()
+
+			client, err := NewClient(Config{
+				Provider:          ProviderOpenAICompatible,
+				BaseURL:           server.URL,
+				Model:             "test-model",
+				ParallelToolCalls: tt.configured,
+				ExtraBody:         tt.extraBody,
+			})
+			if err != nil {
+				t.Fatalf("NewClient returned error: %v", err)
+			}
+			req := ModelRequest{Input: []InputItem{UserMessageItem{Content: []TextPart{{Text: "hello"}}}}}
+			if tt.withTools {
+				req.Tools = []ToolDefinition{{Name: "submit", Parameters: map[string]any{"type": "object"}}}
+			}
+			if _, err := client.Generate(context.Background(), req); err != nil {
+				t.Fatalf("Generate returned error: %v", err)
+			}
+		})
+	}
+}
+
+func TestParallelToolCallsIncludedInStreamingTransports(t *testing.T) {
+	enabled := true
+	for _, transport := range []string{TransportChat, TransportResponses} {
+		t.Run(transport, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				defer r.Body.Close()
+				var body map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Fatalf("decode request body: %v", err)
+				}
+				if body["parallel_tool_calls"] != true || body["stream"] != true {
+					t.Fatalf("unexpected streaming request body: %+v", body)
+				}
+				w.Header().Set("Content-Type", "text/event-stream")
+				if transport == TransportResponses {
+					_, _ = w.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"output\":[]}}\n\n"))
+					return
+				}
+				_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"done\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"))
+			}))
+			defer server.Close()
+
+			client, err := NewClient(Config{
+				Provider:          ProviderOpenAICompatible,
+				BaseURL:           server.URL,
+				Model:             "test-model",
+				Transport:         transport,
+				ParallelToolCalls: &enabled,
+			})
+			if err != nil {
+				t.Fatalf("NewClient returned error: %v", err)
+			}
+			err = client.GenerateStream(context.Background(), ModelRequest{
+				Input: []InputItem{UserMessageItem{Content: []TextPart{{Text: "hello"}}}},
+				Tools: []ToolDefinition{{Name: "submit", Parameters: map[string]any{"type": "object"}}},
+			}, nil)
+			if err != nil {
+				t.Fatalf("GenerateStream returned error: %v", err)
+			}
+		})
+	}
+}
+
 func TestNewImageClientBuildsOpenAIImageClient(t *testing.T) {
 	client, err := NewImageClient(Config{
 		Provider: ProviderOpenAI,

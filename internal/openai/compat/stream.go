@@ -33,6 +33,9 @@ func (c *Client) generateChatStream(ctx context.Context, req model.ModelRequest,
 	if len(req.Tools) > 0 {
 		body["tools"] = openAIChatTools(req.Tools)
 		body["tool_choice"] = "auto"
+		if c.parallelToolCalls != nil {
+			body["parallel_tool_calls"] = *c.parallelToolCalls
+		}
 	}
 	for key, value := range c.mergedBody(req.Options) {
 		body[key] = value
@@ -52,6 +55,9 @@ func (c *Client) generateResponsesStream(ctx context.Context, req model.ModelReq
 	}
 	if len(req.Tools) > 0 {
 		body["tools"] = openAIResponsesTools(req.Tools)
+		if c.parallelToolCalls != nil {
+			body["parallel_tool_calls"] = *c.parallelToolCalls
+		}
 	}
 	for key, value := range c.mergedBody(req.Options) {
 		body[key] = value

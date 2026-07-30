@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -384,6 +385,95 @@ func (submitTool) Run(ctx context.Context, call ToolCallContext, args submitArgs
 	return ToolResult{Message: "submitted"}, nil
 }
 
+type toolBatchClient struct {
+	calls     int
+	toolCalls []model.ToolCallOutput
+}
+
+func (c *toolBatchClient) Generate(ctx context.Context, req model.ModelRequest) (*model.ModelResponse, error) {
+	c.calls++
+	if c.calls == 1 {
+		return &model.ModelResponse{
+			Output: []model.OutputItem{model.AssistantOutput{
+				Role:      "assistant",
+				ToolCalls: append([]model.ToolCallOutput(nil), c.toolCalls...),
+			}},
+			FinishReason: "tool_calls",
+		}, nil
+	}
+	return &model.ModelResponse{
+		Output: []model.OutputItem{model.AssistantOutput{
+			Role:    "assistant",
+			Content: []model.TextPart{{Text: "done"}},
+		}},
+		FinishReason: "stop",
+	}, nil
+}
+
+func (c *toolBatchClient) GenerateStream(ctx context.Context, req model.ModelRequest, handler model.StreamHandler) error {
+	resp, err := c.Generate(ctx, req)
+	if err != nil {
+		return err
+	}
+	if handler != nil {
+		return handler(model.StreamEvent{Type: model.StreamEventDone, Raw: resp})
+	}
+	return nil
+}
+
+type toolConcurrencyProbe struct {
+	mu        sync.Mutex
+	active    int
+	maxActive int
+}
+
+func (p *toolConcurrencyProbe) enter() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.active++
+	if p.active > p.maxActive {
+		p.maxActive = p.active
+	}
+}
+
+func (p *toolConcurrencyProbe) leave() {
+	p.mu.Lock()
+	p.active--
+	p.mu.Unlock()
+}
+
+func (p *toolConcurrencyProbe) maximum() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.maxActive
+}
+
+type controlledTool struct {
+	name     string
+	probe    *toolConcurrencyProbe
+	started  chan<- string
+	finished chan<- string
+	release  <-chan struct{}
+}
+
+func (t controlledTool) Name() string        { return t.name }
+func (t controlledTool) Description() string { return "controlled tool " + t.name }
+
+func (t controlledTool) Run(ctx context.Context, call ToolCallContext, args submitArgs) (ToolResult, error) {
+	t.probe.enter()
+	defer t.probe.leave()
+	t.started <- t.name
+	select {
+	case <-t.release:
+		if t.finished != nil {
+			t.finished <- t.name
+		}
+		return ToolResult{Message: t.name + " completed"}, nil
+	case <-ctx.Done():
+		return ToolResult{}, ctx.Err()
+	}
+}
+
 type capturingSubmitTool struct {
 	value    string
 	repaired bool
@@ -454,7 +544,7 @@ func TestEnginePassesRawArgumentsToTypedRepair(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewTool returned error: %v", err)
 			}
-			engine := NewEngine(rawToolCallingClient{}, WithTools(tool), WithStopAfterToolCall(true))
+			engine := NewEngine(rawToolCallingClient{}, WithTools(tool), WithStopOnToolSuccess(tool))
 			if err := tt.run(engine); err != nil {
 				t.Fatalf("run returned error: %v", err)
 			}
@@ -474,7 +564,7 @@ func TestRunCanStopAfterSuccessfulToolCallFromEngineOption(t *testing.T) {
 	runtime := NewEngine(
 		client,
 		WithTools(runTool),
-		WithStopAfterToolCall(true),
+		WithStopOnToolSuccess(runTool),
 	)
 
 	result, err := runtime.Run(context.Background(), RunRequest{Input: "submit"})
@@ -484,11 +574,190 @@ func TestRunCanStopAfterSuccessfulToolCallFromEngineOption(t *testing.T) {
 	if client.calls != 1 {
 		t.Fatalf("expected one model call, got %d", client.calls)
 	}
-	if result.StopReason != StopReasonStopOnToolResult {
+	if result.StopReason != StopReasonToolSucceeded {
 		t.Fatalf("unexpected stop reason: %q", result.StopReason)
 	}
 	if result.OutputText != "checking" {
 		t.Fatalf("expected pre-tool assistant content, got %q", result.OutputText)
+	}
+}
+
+func TestRunExecutesToolBatchInParallelByDefaultAndStopsAfterBatch(t *testing.T) {
+	firstRelease := make(chan struct{})
+	secondRelease := make(chan struct{})
+	started := make(chan string, 2)
+	finished := make(chan string, 2)
+	probe := &toolConcurrencyProbe{}
+	first, err := NewTool[submitArgs](controlledTool{name: "first", probe: probe, started: started, finished: finished, release: firstRelease})
+	if err != nil {
+		t.Fatalf("NewTool returned error: %v", err)
+	}
+	second, err := NewTool[submitArgs](controlledTool{name: "second", probe: probe, started: started, finished: finished, release: secondRelease})
+	if err != nil {
+		t.Fatalf("NewTool returned error: %v", err)
+	}
+	client := &toolBatchClient{toolCalls: []model.ToolCallOutput{
+		{CallID: "call_first", Name: "first", RawArguments: `{"value":"ok"}`},
+		{CallID: "call_second", Name: "second", RawArguments: `{"value":"ok"}`},
+	}}
+	runtime := NewEngine(client, WithTools(first, second), WithStopOnToolSuccess(first))
+
+	type runOutcome struct {
+		result *RunResult
+		err    error
+	}
+	done := make(chan runOutcome, 1)
+	go func() {
+		result, runErr := runtime.Run(context.Background(), RunRequest{Input: "run both"})
+		done <- runOutcome{result: result, err: runErr}
+	}()
+
+	startedCount := 0
+	timeout := time.NewTimer(time.Second)
+	defer timeout.Stop()
+	for startedCount < 2 {
+		select {
+		case <-started:
+			startedCount++
+		case <-timeout.C:
+			close(firstRelease)
+			close(secondRelease)
+			outcome := <-done
+			t.Fatalf("expected both tools to start concurrently; started=%d err=%v", startedCount, outcome.err)
+		}
+	}
+	close(secondRelease)
+	if name := <-finished; name != "second" {
+		close(firstRelease)
+		t.Fatalf("expected second tool to complete first, got %q", name)
+	}
+	close(firstRelease)
+	outcome := <-done
+	if outcome.err != nil {
+		t.Fatalf("Run returned error: %v", outcome.err)
+	}
+	if probe.maximum() != 2 {
+		t.Fatalf("expected maximum concurrency 2, got %d", probe.maximum())
+	}
+	if client.calls != 1 || outcome.result.StopReason != StopReasonToolSucceeded {
+		t.Fatalf("expected batch stop after one model call, calls=%d reason=%q", client.calls, outcome.result.StopReason)
+	}
+	if len(outcome.result.ToolResults) != 2 || outcome.result.ToolResults[0].Call.Name != "first" || outcome.result.ToolResults[1].Call.Name != "second" {
+		t.Fatalf("tool results lost model order: %+v", outcome.result.ToolResults)
+	}
+}
+
+func TestRunHonorsMaxToolConcurrency(t *testing.T) {
+	release := make(chan struct{})
+	started := make(chan string, 3)
+	probe := &toolConcurrencyProbe{}
+	tools := make([]Tool, 0, 3)
+	calls := make([]model.ToolCallOutput, 0, 3)
+	for _, name := range []string{"first", "second", "third"} {
+		runTool, err := NewTool[submitArgs](controlledTool{name: name, probe: probe, started: started, release: release})
+		if err != nil {
+			t.Fatalf("NewTool returned error: %v", err)
+		}
+		tools = append(tools, runTool)
+		calls = append(calls, model.ToolCallOutput{CallID: "call_" + name, Name: name, RawArguments: `{"value":"ok"}`})
+	}
+	runtime := NewEngine(&toolBatchClient{toolCalls: calls}, WithTools(tools...), WithMaxToolConcurrency(2))
+	done := make(chan error, 1)
+	go func() {
+		_, runErr := runtime.Run(context.Background(), RunRequest{Input: "run all"})
+		done <- runErr
+	}()
+
+	for range 2 {
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			close(release)
+			t.Fatal("expected two tools to start")
+		}
+	}
+	select {
+	case name := <-started:
+		close(release)
+		t.Fatalf("tool %q exceeded configured concurrency", name)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if probe.maximum() != 2 {
+		t.Fatalf("expected maximum concurrency 2, got %d", probe.maximum())
+	}
+}
+
+func TestRunSerialToolExecutionStillCompletesStopBatch(t *testing.T) {
+	release := make(chan struct{})
+	started := make(chan string, 2)
+	probe := &toolConcurrencyProbe{}
+	first, _ := NewTool[submitArgs](controlledTool{name: "first", probe: probe, started: started, release: release})
+	second, _ := NewTool[submitArgs](controlledTool{name: "second", probe: probe, started: started, release: release})
+	client := &toolBatchClient{toolCalls: []model.ToolCallOutput{
+		{CallID: "call_first", Name: "first", RawArguments: `{"value":"ok"}`},
+		{CallID: "call_second", Name: "second", RawArguments: `{"value":"ok"}`},
+	}}
+	runtime := NewEngine(
+		client,
+		WithTools(first, second),
+		WithParallelToolExecution(false),
+		WithStopOnToolSuccessName("first"),
+	)
+	done := make(chan *RunResult, 1)
+	go func() {
+		result, _ := runtime.Run(context.Background(), RunRequest{Input: "run serially"})
+		done <- result
+	}()
+
+	if name := <-started; name != "first" {
+		close(release)
+		t.Fatalf("unexpected first tool: %q", name)
+	}
+	select {
+	case name := <-started:
+		close(release)
+		t.Fatalf("tool %q started before the serial predecessor completed", name)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	result := <-done
+	if result == nil || len(result.ToolResults) != 2 || result.StopReason != StopReasonToolSucceeded {
+		t.Fatalf("expected complete serial batch before stop: %+v", result)
+	}
+	if probe.maximum() != 1 || client.calls != 1 {
+		t.Fatalf("unexpected serial execution: max=%d calls=%d", probe.maximum(), client.calls)
+	}
+}
+
+func TestRunRejectsInvalidToolExecutionConfiguration(t *testing.T) {
+	runTool, err := NewTool[submitArgs](submitTool{})
+	if err != nil {
+		t.Fatalf("NewTool returned error: %v", err)
+	}
+	tests := []struct {
+		name    string
+		options []EngineOption
+		want    string
+	}{
+		{name: "negative concurrency", options: []EngineOption{WithTools(runTool), WithMaxToolConcurrency(-1)}, want: "max tool concurrency cannot be negative"},
+		{name: "unregistered stop tool", options: []EngineOption{WithTools(runTool), WithStopOnToolSuccessName("missing")}, want: `stop tool "missing" is not registered`},
+		{name: "duplicate tool name", options: []EngineOption{WithTools(runTool, runTool)}, want: `duplicate tool name "submit"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := NewEngine(fakeClient{}, tt.options...).Run(context.Background(), RunRequest{Input: "test"})
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("expected %q error, got %v", tt.want, err)
+			}
+			var engineErr *EngineError
+			if !errors.As(err, &engineErr) || engineErr.Kind != EngineErrorInvalidRequest {
+				t.Fatalf("expected invalid request engine error, got %v", err)
+			}
+		})
 	}
 }
 
@@ -527,7 +796,7 @@ func TestRunReturnsToolResults(t *testing.T) {
 	runtime := NewEngine(
 		&toolCallingClient{},
 		WithTools(runTool),
-		WithStopAfterToolCall(true),
+		WithStopOnToolSuccess(runTool),
 	)
 
 	result, err := runtime.Run(context.Background(), RunRequest{Input: "submit"})
@@ -931,10 +1200,10 @@ func TestRunStreamEmitsToolLifecycleAndReturnsResult(t *testing.T) {
 	if events[0].Type != StreamEventMessageDelta || events[0].Text != "checking" {
 		t.Fatalf("unexpected first event: %+v", events[0])
 	}
-	if events[1].Type != StreamEventToolStart || events[1].ToolName != "submit" {
+	if events[1].Type != StreamEventToolStart || events[1].ToolName != "submit" || events[1].ToolCallID != "call_1" {
 		t.Fatalf("unexpected second event: %+v", events[1])
 	}
-	if events[2].Type != StreamEventToolFinish || events[2].ToolName != "submit" {
+	if events[2].Type != StreamEventToolFinish || events[2].ToolName != "submit" || events[2].ToolCallID != "call_1" {
 		t.Fatalf("unexpected third event: %+v", events[2])
 	}
 	if events[3].Type != StreamEventMessageDelta || events[3].Text != "done" {

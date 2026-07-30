@@ -327,7 +327,7 @@ func Example_submitStructuredProfileToMemory() {
 		profileExtractionClient{},
 		easyllm.WithInstructions("Extract the student profile from the user's self introduction and submit it with the tool."),
 		easyllm.WithTools(submitProfile),
-		easyllm.WithStopAfterToolCall(true),
+		easyllm.WithStopOnToolSuccess(submitProfile),
 	)
 	result, err := rt.Run(context.Background(), easyllm.RunRequest{
 		Input: "大家好，我叫小林，是五年级男生。我喜欢足球、机器人和画画。",
@@ -342,7 +342,7 @@ func Example_submitStructuredProfileToMemory() {
 	fmt.Println(strings.Join(store.Profile.Hobbies, ","))
 
 	// Output:
-	// stop_on_tool_result
+	// tool_succeeded
 	// submit_student_profile
 	// 小林 五年级 男
 	// 足球,机器人,画画
