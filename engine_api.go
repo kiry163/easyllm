@@ -19,6 +19,7 @@ type Engine struct {
 	maxToolConcurrency    int
 	stopOnToolSuccess     bool
 	stopToolName          string
+	stopToolReminder      *int
 	toolChoice            *ToolChoice
 	currentTime           *currentTimeRuntime
 }
@@ -133,6 +134,16 @@ func WithStopOnToolSuccessName(name string) EngineOption {
 	}
 }
 
+// WithStopToolReminder configures when the Engine starts reminding the model
+// to call the configured stop tool. Zero disables reminders. When omitted,
+// reminders start at half of the model-call limit, rounded up.
+func WithStopToolReminder(remainingModelCalls int) EngineOption {
+	return func(e *Engine) {
+		value := remainingModelCalls
+		e.stopToolReminder = &value
+	}
+}
+
 // WithCurrentTime enables current-time injection for Run and RunStream calls.
 func WithCurrentTime(config CurrentTimeConfig) EngineOption {
 	return func(e *Engine) {
@@ -188,6 +199,7 @@ func (e *Engine) Run(ctx context.Context, req RunRequest) (*RunResult, error) {
 		maxToolConcurrency:    e.maxToolConcurrency,
 		stopOnToolSuccess:     e.stopOnToolSuccess,
 		stopToolName:          e.stopToolName,
+		stopToolReminder:      e.stopToolReminder,
 		toolChoice:            e.toolChoice,
 		requestItems:          e.currentTimeItems(req.CurrentTimeLocation),
 	})
@@ -220,6 +232,7 @@ func (e *Engine) RunStream(ctx context.Context, req RunRequest, handler StreamHa
 		maxToolConcurrency:    e.maxToolConcurrency,
 		stopOnToolSuccess:     e.stopOnToolSuccess,
 		stopToolName:          e.stopToolName,
+		stopToolReminder:      e.stopToolReminder,
 		toolChoice:            e.toolChoice,
 		requestItems:          e.currentTimeItems(req.CurrentTimeLocation),
 	})

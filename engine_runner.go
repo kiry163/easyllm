@@ -17,6 +17,7 @@ type runConfig struct {
 	maxToolConcurrency    int
 	stopOnToolSuccess     bool
 	stopToolName          string
+	stopToolReminder      *int
 	toolChoice            *ToolChoice
 	requestItems          []model.InputItem
 }
@@ -57,6 +58,9 @@ func prepareToolMap(cfg *runConfig) (map[string]Tool, error) {
 	if cfg.maxToolConcurrency < 0 {
 		return nil, fmt.Errorf("max tool concurrency cannot be negative")
 	}
+	if cfg.stopToolReminder != nil && *cfg.stopToolReminder < 0 {
+		return nil, fmt.Errorf("stop tool reminder cannot be negative")
+	}
 	toolMap := make(map[string]Tool, len(cfg.tools))
 	for _, current := range cfg.tools {
 		if current == nil {
@@ -72,6 +76,9 @@ func prepareToolMap(cfg *runConfig) (map[string]Tool, error) {
 		return nil, err
 	}
 	if !cfg.stopOnToolSuccess {
+		if cfg.stopToolReminder != nil && *cfg.stopToolReminder > 0 {
+			return nil, fmt.Errorf("stop tool reminder requires a configured stop tool")
+		}
 		return toolMap, nil
 	}
 	cfg.stopToolName = strings.TrimSpace(cfg.stopToolName)
@@ -527,12 +534,43 @@ func buildModelRequest(session *Session, metadata map[string]any, cfg runConfig,
 		}
 		toolChoice = &choice
 	}
+	requestItems := cfg.requestItems
+	if reminder := stopToolReminderItem(cfg, iteration); reminder != nil {
+		requestItems = append(append([]model.InputItem(nil), requestItems...), reminder)
+	}
 	return ModelRequest{
-		Input:      inputWithRequestItems(session.ItemsView(), cfg.requestItems),
+		Input:      inputWithRequestItems(session.ItemsView(), requestItems),
 		Tools:      definitionsFromTools(cfg.tools),
 		ToolChoice: toolChoice,
 		Metadata:   cloneMap(metadata),
 	}
+}
+
+func stopToolReminderItem(cfg runConfig, iteration int) model.InputItem {
+	if !cfg.stopOnToolSuccess {
+		return nil
+	}
+	threshold := cfg.maxModelCalls/2 + cfg.maxModelCalls%2
+	if cfg.stopToolReminder != nil {
+		threshold = *cfg.stopToolReminder
+	}
+	remaining := cfg.maxModelCalls - iteration + 1
+	if threshold <= 0 || remaining > threshold {
+		return nil
+	}
+	unit := "calls"
+	if remaining == 1 {
+		unit = "call"
+	}
+	text := fmt.Sprintf(
+		"This run will stop automatically when its model-call limit is reached.\n"+
+			"You have %d model %s remaining, including this one.\n"+
+			"Complete the remaining work promptly. Before the limit is reached, call the tool named %q.",
+		remaining,
+		unit,
+		cfg.stopToolName,
+	)
+	return model.SystemMessageItem{Content: []model.TextPart{model.NewTextPart(text)}}
 }
 
 func inputWithRequestItems(items, requestItems []model.InputItem) []model.InputItem {

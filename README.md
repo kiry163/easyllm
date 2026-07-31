@@ -529,6 +529,13 @@ current model-response batch has completed, so already accepted calls are never
 discarded. Tool implementations may therefore be invoked concurrently, including
 multiple invocations of the same tool instance, and must protect mutable state.
 
+When a specific stop tool is configured, the engine starts injecting a temporary
+system reminder once half of the model-call budget remains, rounded up. The
+reminder includes the registered tool name and the number of calls left,
+including the current request, and is not persisted in the session. Override
+the threshold with `WithStopToolReminder(n)`, or disable reminders explicitly with
+`WithStopToolReminder(0)`.
+
 Tool arguments are collected as raw provider strings and repaired once the registered tool's Go type is known. Unknown arguments are rejected by default; tools can choose `UnknownArgumentsWarn` or `UnknownArgumentsIgnore`. Warning details, the original arguments, and the selected repair strategy are available from `ToolCallContext`. Tool errors are returned to the model as structured tool results and are also recorded in `RunResult.ToolResults`.
 
 When upgrading, move any `tool:"name=..."` field name to the field's `json` tag. Custom `Tool` implementations now receive raw arguments through `ToolCallContext.RawArguments`, so `Tool.Invoke` no longer accepts a separate argument map. `ToolCallOutput` and `ToolCallItem` likewise expose `RawArguments` instead of parsed `Arguments` or `Repaired` fields.

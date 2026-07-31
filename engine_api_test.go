@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -436,6 +437,177 @@ func TestToolChoiceConstructorsReachFirstModelRequest(t *testing.T) {
 	}
 }
 
+type stopToolReminderClient struct {
+	requests []model.ModelRequest
+}
+
+func (c *stopToolReminderClient) Generate(ctx context.Context, req model.ModelRequest) (*model.ModelResponse, error) {
+	c.requests = append(c.requests, req)
+	return &model.ModelResponse{
+		Output: []model.OutputItem{model.AssistantOutput{
+			Role: "assistant",
+			ToolCalls: []model.ToolCallOutput{{
+				CallID:       fmt.Sprintf("call_%d", len(c.requests)),
+				Name:         "continue_work",
+				RawArguments: `{"value":"ok"}`,
+			}},
+		}},
+		FinishReason: "tool_calls",
+	}, nil
+}
+
+func (c *stopToolReminderClient) GenerateStream(ctx context.Context, req model.ModelRequest, handler model.StreamHandler) error {
+	resp, err := c.Generate(ctx, req)
+	if err != nil {
+		return err
+	}
+	if handler != nil {
+		return handler(model.StreamEvent{Type: model.StreamEventDone, Raw: resp})
+	}
+	return nil
+}
+
+type reminderTool struct {
+	name string
+}
+
+func (t reminderTool) Name() string        { return t.name }
+func (t reminderTool) Description() string { return "tool " + t.name }
+
+func (t reminderTool) Run(ctx context.Context, call ToolCallContext, args submitArgs) (ToolResult, error) {
+	return ToolResult{Message: t.name + " completed"}, nil
+}
+
+func newStopToolReminderTools(t *testing.T) (Tool, Tool) {
+	t.Helper()
+	continueTool, err := NewTool[submitArgs](reminderTool{name: "continue_work"})
+	if err != nil {
+		t.Fatalf("create continue tool: %v", err)
+	}
+	finalTool, err := NewTool[submitArgs](reminderTool{name: "submit_final_answer"})
+	if err != nil {
+		t.Fatalf("create final tool: %v", err)
+	}
+	return continueTool, finalTool
+}
+
+func TestStopToolReminderDefaultsToHalfTheCallLimitRoundedUp(t *testing.T) {
+	continueTool, finalTool := newStopToolReminderTools(t)
+	client := &stopToolReminderClient{}
+	runtime := NewEngine(
+		client,
+		WithTools(continueTool, finalTool),
+		WithMaxModelCalls(5),
+		WithStopOnToolSuccess(finalTool),
+	)
+
+	result, err := runtime.Run(context.Background(), RunRequest{Input: "finish the task"})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if result.StopReason != StopReasonModelCallLimitExceeded || len(client.requests) != 5 {
+		t.Fatalf("unexpected run result: %+v requests=%d", result, len(client.requests))
+	}
+	wants := []string{"", "", "3 model calls remaining", "2 model calls remaining", "1 model call remaining"}
+	for i, request := range client.requests {
+		reminder := toolReminderText(request)
+		if wants[i] == "" {
+			if reminder != "" {
+				t.Fatalf("request %d unexpectedly contained reminder: %q", i+1, reminder)
+			}
+			continue
+		}
+		if !strings.Contains(reminder, wants[i]) {
+			t.Fatalf("request %d reminder %q does not contain %q", i+1, reminder, wants[i])
+		}
+		if !strings.Contains(reminder, `tool named "submit_final_answer"`) {
+			t.Fatalf("request %d reminder does not use the registered tool name: %q", i+1, reminder)
+		}
+		if strings.Contains(reminder, "finishTool") || strings.Contains(reminder, "stopToolName") || strings.Contains(reminder, "finish tool") || strings.Contains(reminder, "stop tool") {
+			t.Fatalf("request %d reminder leaked internal terminology: %q", i+1, reminder)
+		}
+	}
+	for _, item := range result.Session.Items {
+		if system, ok := item.(model.SystemMessageItem); ok && strings.Contains(firstText(system.Content), "model-call limit") {
+			t.Fatal("stop tool reminder was persisted in the session")
+		}
+	}
+}
+
+func TestStopToolReminderOverrideAndDisable(t *testing.T) {
+	continueTool, finalTool := newStopToolReminderTools(t)
+	tests := []struct {
+		name      string
+		threshold int
+		wants     []string
+	}{
+		{name: "explicit threshold", threshold: 1, wants: []string{"", "", "", "1 model call remaining"}},
+		{name: "disabled", threshold: 0, wants: []string{"", "", "", ""}},
+		{name: "larger than limit", threshold: 8, wants: []string{"4 model calls remaining", "3 model calls remaining", "2 model calls remaining", "1 model call remaining"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := &stopToolReminderClient{}
+			runtime := NewEngine(
+				client,
+				WithTools(continueTool, finalTool),
+				WithMaxModelCalls(4),
+				WithStopOnToolSuccessName("submit_final_answer"),
+				WithStopToolReminder(tt.threshold),
+			)
+			if _, err := runtime.Run(context.Background(), RunRequest{Input: "finish the task"}); err != nil {
+				t.Fatalf("Run returned error: %v", err)
+			}
+			for i, request := range client.requests {
+				got := toolReminderText(request)
+				if tt.wants[i] == "" && got != "" {
+					t.Fatalf("request %d unexpectedly contained reminder: %q", i+1, got)
+				}
+				if tt.wants[i] != "" && !strings.Contains(got, tt.wants[i]) {
+					t.Fatalf("request %d reminder %q does not contain %q", i+1, got, tt.wants[i])
+				}
+			}
+		})
+	}
+}
+
+func TestRunStreamInjectsDynamicStopToolReminders(t *testing.T) {
+	continueTool, finalTool := newStopToolReminderTools(t)
+	client := &stopToolReminderClient{}
+	runtime := NewEngine(
+		client,
+		WithTools(continueTool, finalTool),
+		WithMaxModelCalls(3),
+		WithStopOnToolSuccess(finalTool),
+	)
+
+	if _, err := runtime.RunStream(context.Background(), RunRequest{Input: "finish the task"}, nil); err != nil {
+		t.Fatalf("RunStream returned error: %v", err)
+	}
+	wants := []string{"", "2 model calls remaining", "1 model call remaining"}
+	for i, request := range client.requests {
+		got := toolReminderText(request)
+		if wants[i] == "" && got != "" {
+			t.Fatalf("request %d unexpectedly contained reminder: %q", i+1, got)
+		}
+		if wants[i] != "" && !strings.Contains(got, wants[i]) {
+			t.Fatalf("request %d reminder %q does not contain %q", i+1, got, wants[i])
+		}
+	}
+}
+
+func toolReminderText(req model.ModelRequest) string {
+	for _, item := range req.Input {
+		if system, ok := item.(model.SystemMessageItem); ok {
+			text := firstText(system.Content)
+			if strings.Contains(text, "model-call limit") {
+				return text
+			}
+		}
+	}
+	return ""
+}
+
 type submitArgs struct {
 	Value string `json:"value" tool:"required"`
 }
@@ -819,6 +991,8 @@ func TestRunRejectsInvalidToolExecutionConfiguration(t *testing.T) {
 		{name: "empty named tool", options: []EngineOption{WithTools(runTool), WithToolChoice(NamedToolChoice(" "))}, want: "named tool choice requires a tool name"},
 		{name: "unregistered named tool", options: []EngineOption{WithTools(runTool), WithToolChoice(NamedToolChoice("missing"))}, want: `tool choice "missing" is not registered`},
 		{name: "invalid choice", options: []EngineOption{WithTools(runTool), WithToolChoice(ToolChoice{})}, want: `invalid tool choice mode ""`},
+		{name: "negative stop tool reminder", options: []EngineOption{WithStopToolReminder(-1)}, want: "stop tool reminder cannot be negative"},
+		{name: "reminder without stop tool", options: []EngineOption{WithStopToolReminder(1)}, want: "stop tool reminder requires a configured stop tool"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
