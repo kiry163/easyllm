@@ -49,6 +49,24 @@ func (r *guidedRunner) Run(ctx context.Context, call easyllm.ToolCallContext, ar
 	}}, nil
 }
 
+type recursiveNode struct {
+	Name     string          `json:"name"`
+	Children []recursiveNode `json:"children" tool:"required,maxDepth=2"`
+}
+
+type recursiveArgs struct {
+	Root recursiveNode `json:"root" tool:"required"`
+}
+
+type recursiveRunner struct{}
+
+func (recursiveRunner) Name() string        { return "recursive" }
+func (recursiveRunner) Description() string { return "accept a recursive tree" }
+
+func (recursiveRunner) Run(ctx context.Context, call easyllm.ToolCallContext, args recursiveArgs) (easyllm.ToolResult, error) {
+	return easyllm.ToolResult{Message: args.Root.Name}, nil
+}
+
 func TestNewRepairsRawJSONObjectArguments(t *testing.T) {
 	submitTool, err := easyllm.NewTool[submitArgs](submitRunner{})
 	if err != nil {
@@ -64,6 +82,21 @@ func TestNewRepairsRawJSONObjectArguments(t *testing.T) {
 	}
 	if result.Data["value"] != "ok" {
 		t.Fatalf("unexpected value: %#v", result.Data["value"])
+	}
+}
+
+func TestInvokeEnforcesRecursiveMaxDepth(t *testing.T) {
+	tool, err := easyllm.NewTool[recursiveArgs](recursiveRunner{}, easyllm.WithUnknownArguments(easyllm.UnknownArgumentsIgnore))
+	if err != nil {
+		t.Fatalf("NewTool returned error: %v", err)
+	}
+	valid := `{"root":{"name":"root","children":[{"name":"child","children":[{"name":"grandchild"}]}]}}`
+	if _, err := tool.Invoke(context.Background(), easyllm.ToolCallContext{RawArguments: valid}); err != nil {
+		t.Fatalf("Invoke rejected schema-valid leaf omission: %v", err)
+	}
+	overflow := `{"root":{"name":"root","children":[{"name":"child","children":[{"name":"grandchild","children":[]}]}]}}`
+	if _, err := tool.Invoke(context.Background(), easyllm.ToolCallContext{RawArguments: overflow}); err == nil || !strings.Contains(err.Error(), "exceeds maxDepth=2") {
+		t.Fatalf("expected maxDepth overflow error, got %v", err)
 	}
 }
 
@@ -307,6 +340,150 @@ func TestSchemaForSupportsStringAndArrayLengthConstraints(t *testing.T) {
 	}
 	if hobbies["minItems"] != 1 || hobbies["maxItems"] != 5 {
 		t.Fatalf("unexpected array length constraints: minItems=%#v maxItems=%#v", hobbies["minItems"], hobbies["maxItems"])
+	}
+}
+
+func TestSchemaForSupportsRecursiveValueTypesWithMaxDepth(t *testing.T) {
+	type node struct {
+		Name     string `json:"name"`
+		Children []node `json:"children" tool:"required,maxDepth=2"`
+	}
+	type args struct {
+		Root node `json:"root" tool:"required"`
+	}
+
+	schema, err := easyllm.SchemaFor[args]()
+	if err != nil {
+		t.Fatalf("SchemaFor returned error: %v", err)
+	}
+	root := schema["properties"].(map[string]any)["root"].(map[string]any)
+	child := root["properties"].(map[string]any)["children"].(map[string]any)
+	grandchild := child["items"].(map[string]any)
+	if _, ok := grandchild["properties"].(map[string]any)["children"]; !ok {
+		t.Fatalf("expected children at first recursive level: %#v", grandchild)
+	}
+	leaf := grandchild["properties"].(map[string]any)["children"].(map[string]any)["items"].(map[string]any)
+	if _, ok := leaf["properties"].(map[string]any)["children"]; ok {
+		t.Fatalf("expected children to be omitted at maxDepth leaf: %#v", leaf)
+	}
+	if _, ok := leaf["required"]; ok {
+		t.Fatalf("expected no required fields at maxDepth leaf: %#v", leaf)
+	}
+}
+
+func TestSchemaForSupportsRecursivePointerTypesWithMaxDepth(t *testing.T) {
+	type node struct {
+		Name     string  `json:"name"`
+		Children []*node `json:"children" tool:"maxDepth=1"`
+	}
+	type args struct {
+		Root *node `json:"root" tool:"required"`
+	}
+
+	schema, err := easyllm.SchemaFor[args]()
+	if err != nil {
+		t.Fatalf("SchemaFor returned error: %v", err)
+	}
+	root := schema["properties"].(map[string]any)["root"].(map[string]any)
+	child := root["properties"].(map[string]any)["children"].(map[string]any)["items"].(map[string]any)
+	if _, ok := child["properties"].(map[string]any)["children"]; ok {
+		t.Fatalf("expected pointer-recursive children to be omitted at maxDepth leaf: %#v", child)
+	}
+}
+
+func TestRecursiveMaxDepthBindingAllowsLeafOmissionAndRejectsOverflow(t *testing.T) {
+	type node struct {
+		Name     string `json:"name"`
+		Children []node `json:"children" tool:"required,maxDepth=2"`
+	}
+	type args struct {
+		Root node `json:"root" tool:"required"`
+	}
+	raw := map[string]any{
+		"root": map[string]any{
+			"name": "root",
+			"children": []any{
+				map[string]any{
+					"name": "child",
+					"children": []any{
+						map[string]any{"name": "grandchild"},
+					},
+				},
+			},
+		},
+	}
+	if _, err := easyllm.BindArgs[args](raw); err != nil {
+		t.Fatalf("BindArgs rejected schema-valid leaf omission: %v", err)
+	}
+	raw["root"].(map[string]any)["children"].([]any)[0].(map[string]any)["children"].([]any)[0].(map[string]any)["children"] = []any{}
+	if _, err := easyllm.BindArgs[args](raw); err == nil || !strings.Contains(err.Error(), "exceeds maxDepth=2") {
+		t.Fatalf("expected maxDepth overflow error, got %v", err)
+	}
+}
+
+func TestRecursiveMaxDepthTagValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		want string
+		make func() (map[string]any, error)
+	}{
+		{
+			name: "missing maxDepth",
+			want: "requires maxDepth",
+			make: func() (map[string]any, error) {
+				type node struct {
+					Children []node `json:"children"`
+				}
+				type args struct {
+					Root node `json:"root"`
+				}
+				return easyllm.SchemaFor[args]()
+			},
+		},
+		{
+			name: "zero maxDepth",
+			want: "must be an integer >= 1",
+			make: func() (map[string]any, error) {
+				type node struct {
+					Children []node `json:"children" tool:"maxDepth=0"`
+				}
+				type args struct {
+					Root node `json:"root"`
+				}
+				return easyllm.SchemaFor[args]()
+			},
+		},
+		{
+			name: "non-numeric maxDepth",
+			want: "must be an integer >= 1",
+			make: func() (map[string]any, error) {
+				type node struct {
+					Children []node `json:"children" tool:"maxDepth=two"`
+				}
+				type args struct {
+					Root node `json:"root"`
+				}
+				return easyllm.SchemaFor[args]()
+			},
+		},
+		{
+			name: "non-recursive maxDepth",
+			want: "not recursive",
+			make: func() (map[string]any, error) {
+				type args struct {
+					Name string `json:"name" tool:"maxDepth=2"`
+				}
+				return easyllm.SchemaFor[args]()
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := tt.make()
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("expected error containing %q, got %v", tt.want, err)
+			}
+		})
 	}
 }
 

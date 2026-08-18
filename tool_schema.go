@@ -17,6 +17,7 @@ type toolTag struct {
 	MaxLength   *int
 	MinItems    *int
 	MaxItems    *int
+	MaxDepth    *int
 	legacyName  bool
 }
 
@@ -30,9 +31,49 @@ func SchemaFor[T any]() (map[string]any, error) {
 }
 
 func schemaForType(typ reflect.Type, topLevel bool) (map[string]any, error) {
+	context := &schemaContext{
+		recursionDepth: map[recursionField]int{},
+		declaredDepth:  map[recursionField]bool{},
+		usedDepth:      map[recursionField]bool{},
+	}
+	schema, err := schemaForTypeWithContext(typ, topLevel, context)
+	if err != nil {
+		return nil, err
+	}
+	for _, declaration := range context.depthDeclarations {
+		if !context.usedDepth[declaration.key] {
+			return nil, fmt.Errorf("tool field %s uses maxDepth but is not recursive", declaration.name)
+		}
+	}
+	return schema, nil
+}
+
+type recursionField struct {
+	owner reflect.Type
+	index int
+}
+
+type schemaContext struct {
+	path              []reflect.Type
+	recursionDepth    map[recursionField]int
+	declaredDepth     map[recursionField]bool
+	usedDepth         map[recursionField]bool
+	depthDeclarations []depthDeclaration
+}
+
+type depthDeclaration struct {
+	key  recursionField
+	name string
+}
+
+func schemaForTypeWithContext(typ reflect.Type, topLevel bool, context *schemaContext) (map[string]any, error) {
 	typ = derefType(typ)
 	switch typ.Kind() {
 	case reflect.Struct:
+		context.path = append(context.path, typ)
+		defer func() {
+			context.path = context.path[:len(context.path)-1]
+		}()
 		properties := map[string]any{}
 		required := make([]string, 0)
 		for i := 0; i < typ.NumField(); i++ {
@@ -43,7 +84,10 @@ func schemaForType(typ reflect.Type, topLevel bool) (map[string]any, error) {
 			if field.PkgPath != "" {
 				continue
 			}
-			tag := parseToolTag(field)
+			tag, err := parseToolTag(field)
+			if err != nil {
+				return nil, err
+			}
 			if tag.legacyName {
 				return nil, fmt.Errorf("tool field %s uses unsupported name=; use a json tag instead", field.Name)
 			}
@@ -57,7 +101,35 @@ func schemaForType(typ reflect.Type, topLevel bool) (map[string]any, error) {
 			if _, exists := properties[name]; exists {
 				return nil, fmt.Errorf("duplicate tool JSON field %q", name)
 			}
-			fieldSchema, err := schemaForType(field.Type, false)
+			key := recursionField{owner: typ, index: i}
+			if tag.MaxDepth != nil && !context.declaredDepth[key] {
+				context.declaredDepth[key] = true
+				context.depthDeclarations = append(context.depthDeclarations, depthDeclaration{key: key, name: field.Name})
+			}
+			recursive := typeInPath(recursiveBaseType(field.Type), context.path)
+			var fieldSchema map[string]any
+			if recursive {
+				if tag.MaxDepth == nil {
+					return nil, fmt.Errorf("recursive tool field %s requires maxDepth", field.Name)
+				}
+				context.usedDepth[key] = true
+				depth := context.recursionDepth[key]
+				if depth >= *tag.MaxDepth {
+					continue
+				}
+				context.recursionDepth[key] = depth + 1
+				fieldSchema, err = schemaForTypeWithContext(field.Type, false, context)
+				if err != nil {
+					return nil, err
+				}
+				if depth == 0 {
+					delete(context.recursionDepth, key)
+				} else {
+					context.recursionDepth[key] = depth
+				}
+			} else {
+				fieldSchema, err = schemaForTypeWithContext(field.Type, false, context)
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -100,7 +172,7 @@ func schemaForType(typ reflect.Type, topLevel bool) (map[string]any, error) {
 		}
 		return out, nil
 	case reflect.Slice, reflect.Array:
-		items, err := schemaForType(typ.Elem(), false)
+		items, err := schemaForTypeWithContext(typ.Elem(), false, context)
 		if err != nil {
 			return nil, err
 		}
@@ -122,10 +194,10 @@ func schemaForType(typ reflect.Type, topLevel bool) (map[string]any, error) {
 	}
 }
 
-func parseToolTag(field reflect.StructField) toolTag {
+func parseToolTag(field reflect.StructField) (toolTag, error) {
 	raw := strings.TrimSpace(field.Tag.Get("tool"))
 	if raw == "" {
-		return toolTag{}
+		return toolTag{}, nil
 	}
 	out := toolTag{}
 	for _, part := range strings.Split(raw, ",") {
@@ -165,9 +237,37 @@ func parseToolTag(field reflect.StructField) toolTag {
 			if value, ok := parseIntTag(strings.TrimSpace(strings.TrimPrefix(part, "maxItems="))); ok {
 				out.MaxItems = &value
 			}
+		case strings.HasPrefix(part, "maxDepth="):
+			rawDepth := strings.TrimSpace(strings.TrimPrefix(part, "maxDepth="))
+			value, ok := parseIntTag(rawDepth)
+			if !ok || value < 1 {
+				return toolTag{}, fmt.Errorf("tool field %s has invalid maxDepth %q: must be an integer >= 1", field.Name, rawDepth)
+			}
+			out.MaxDepth = &value
 		}
 	}
-	return out
+	return out, nil
+}
+
+func recursiveBaseType(typ reflect.Type) reflect.Type {
+	for {
+		switch typ.Kind() {
+		case reflect.Pointer, reflect.Slice, reflect.Array:
+			typ = typ.Elem()
+		default:
+			return derefType(typ)
+		}
+	}
+}
+
+func typeInPath(typ reflect.Type, path []reflect.Type) bool {
+	typ = derefType(typ)
+	for _, current := range path {
+		if derefType(current) == typ {
+			return true
+		}
+	}
+	return false
 }
 
 func parseEnumValues(raw string) []any {

@@ -16,18 +16,31 @@ func bindArgs[T any](raw map[string]any, unknownPolicy UnknownArgumentPolicy) (T
 	if target.Kind() != reflect.Struct {
 		return out, nil, fmt.Errorf("tool args target must be a struct")
 	}
+	if _, err := schemaForType(target.Type(), true); err != nil {
+		return out, nil, err
+	}
 	if raw == nil {
 		raw = map[string]any{}
 	}
 	var issues []ToolArgumentIssue
-	if err := bindStruct(target, raw, "", unknownPolicy, &issues); err != nil {
+	context := &bindingContext{recursionDepth: map[recursionField]int{}}
+	if err := bindStructWithContext(target, raw, "", unknownPolicy, &issues, context); err != nil {
 		return out, issues, err
 	}
 	return out, issues, nil
 }
 
-func bindStruct(target reflect.Value, raw map[string]any, path string, unknownPolicy UnknownArgumentPolicy, issues *[]ToolArgumentIssue) error {
+type bindingContext struct {
+	path           []reflect.Type
+	recursionDepth map[recursionField]int
+}
+
+func bindStructWithContext(target reflect.Value, raw map[string]any, path string, unknownPolicy UnknownArgumentPolicy, issues *[]ToolArgumentIssue, context *bindingContext) error {
 	typ := target.Type()
+	context.path = append(context.path, derefType(typ))
+	defer func() {
+		context.path = context.path[:len(context.path)-1]
+	}()
 	allowed := map[string]struct{}{}
 	for i := 0; i < typ.NumField(); i++ {
 		field := typ.Field(i)
@@ -37,7 +50,10 @@ func bindStruct(target reflect.Value, raw map[string]any, path string, unknownPo
 		if field.PkgPath != "" {
 			continue
 		}
-		tag := parseToolTag(field)
+		tag, err := parseToolTag(field)
+		if err != nil {
+			return err
+		}
 		if tag.legacyName {
 			return fmt.Errorf("tool field %s uses unsupported name=; use a json tag instead", field.Name)
 		}
@@ -57,14 +73,38 @@ func bindStruct(target reflect.Value, raw map[string]any, path string, unknownPo
 		if path != "" {
 			fieldPath = path + "." + name
 		}
+		recursive := typeInPath(recursiveBaseType(field.Type), context.path)
+		depthKey := recursionField{owner: typ, index: i}
+		depth := 0
+		if recursive {
+			if tag.MaxDepth == nil {
+				return fmt.Errorf("recursive tool field %s requires maxDepth", field.Name)
+			}
+			depth = context.recursionDepth[depthKey]
+			if depth >= *tag.MaxDepth {
+				if ok {
+					return fmt.Errorf("%s exceeds maxDepth=%d", fieldPath, *tag.MaxDepth)
+				}
+				continue
+			}
+		}
 		if !ok {
 			if tag.Required {
 				return fmt.Errorf("%s is required", fieldPath)
 			}
 			continue
 		}
-		if err := assignValue(target.Field(i), value, fieldPath, unknownPolicy, issues); err != nil {
+		if recursive {
+			context.recursionDepth[depthKey] = depth + 1
+		}
+		if err := assignValue(target.Field(i), value, fieldPath, unknownPolicy, issues, context); err != nil {
+			if recursive {
+				restoreRecursionDepth(context.recursionDepth, depthKey, depth)
+			}
 			return err
+		}
+		if recursive {
+			restoreRecursionDepth(context.recursionDepth, depthKey, depth)
 		}
 		if err := validateConstraints(target.Field(i), tag, fieldPath); err != nil {
 			return err
@@ -93,15 +133,23 @@ func validateTypedArgs[T any](args T, raw map[string]any, unknownPolicy UnknownA
 		raw = map[string]any{}
 	}
 	var issues []ToolArgumentIssue
-	if err := validateTypedStruct(target, raw, "", unknownPolicy, &issues); err != nil {
+	context := &bindingContext{recursionDepth: map[recursionField]int{}}
+	if err := validateTypedStructWithContext(target, raw, "", unknownPolicy, &issues, context); err != nil {
 		return issues, err
 	}
 	return issues, nil
 }
 
-func validateTypedStruct(target reflect.Value, raw map[string]any, path string, unknownPolicy UnknownArgumentPolicy, issues *[]ToolArgumentIssue) error {
+func validateTypedStructWithContext(target reflect.Value, raw map[string]any, path string, unknownPolicy UnknownArgumentPolicy, issues *[]ToolArgumentIssue, context *bindingContext) error {
 	target = derefValue(target)
+	if !target.IsValid() {
+		return nil
+	}
 	typ := target.Type()
+	context.path = append(context.path, derefType(typ))
+	defer func() {
+		context.path = context.path[:len(context.path)-1]
+	}()
 	allowed := map[string]struct{}{}
 	for i := 0; i < typ.NumField(); i++ {
 		field := typ.Field(i)
@@ -111,7 +159,10 @@ func validateTypedStruct(target reflect.Value, raw map[string]any, path string, 
 		if field.PkgPath != "" {
 			continue
 		}
-		tag := parseToolTag(field)
+		tag, err := parseToolTag(field)
+		if err != nil {
+			return err
+		}
 		if tag.legacyName {
 			return fmt.Errorf("tool field %s uses unsupported name=; use a json tag instead", field.Name)
 		}
@@ -128,6 +179,21 @@ func validateTypedStruct(target reflect.Value, raw map[string]any, path string, 
 		allowed[name] = struct{}{}
 		value, ok := raw[name]
 		fieldPath := joinArgumentPath(path, name)
+		recursive := typeInPath(recursiveBaseType(field.Type), context.path)
+		depthKey := recursionField{owner: typ, index: i}
+		depth := 0
+		if recursive {
+			if tag.MaxDepth == nil {
+				return fmt.Errorf("recursive tool field %s requires maxDepth", field.Name)
+			}
+			depth = context.recursionDepth[depthKey]
+			if depth >= *tag.MaxDepth {
+				if ok {
+					return fmt.Errorf("%s exceeds maxDepth=%d", fieldPath, *tag.MaxDepth)
+				}
+				continue
+			}
+		}
 		if !ok {
 			if tag.Required {
 				return fmt.Errorf("%s is required", fieldPath)
@@ -138,8 +204,17 @@ func validateTypedStruct(target reflect.Value, raw map[string]any, path string, 
 		if err := validateConstraints(fieldValue, tag, fieldPath); err != nil {
 			return err
 		}
-		if err := validateTypedNested(fieldValue, value, fieldPath, unknownPolicy, issues); err != nil {
+		if recursive {
+			context.recursionDepth[depthKey] = depth + 1
+		}
+		if err := validateTypedNested(fieldValue, value, fieldPath, unknownPolicy, issues, context); err != nil {
+			if recursive {
+				restoreRecursionDepth(context.recursionDepth, depthKey, depth)
+			}
 			return err
+		}
+		if recursive {
+			restoreRecursionDepth(context.recursionDepth, depthKey, depth)
 		}
 	}
 	for name := range raw {
@@ -152,7 +227,7 @@ func validateTypedStruct(target reflect.Value, raw map[string]any, path string, 
 	return nil
 }
 
-func validateTypedNested(target reflect.Value, raw any, path string, unknownPolicy UnknownArgumentPolicy, issues *[]ToolArgumentIssue) error {
+func validateTypedNested(target reflect.Value, raw any, path string, unknownPolicy UnknownArgumentPolicy, issues *[]ToolArgumentIssue, context *bindingContext) error {
 	target = derefValue(target)
 	if !target.IsValid() {
 		return nil
@@ -163,7 +238,7 @@ func validateTypedNested(target reflect.Value, raw any, path string, unknownPoli
 		if !ok {
 			return nil
 		}
-		return validateTypedStruct(target, obj, path, unknownPolicy, issues)
+		return validateTypedStructWithContext(target, obj, path, unknownPolicy, issues, context)
 	case reflect.Slice, reflect.Array:
 		items, ok := raw.([]any)
 		if !ok {
@@ -174,7 +249,7 @@ func validateTypedNested(target reflect.Value, raw any, path string, unknownPoli
 			limit = len(items)
 		}
 		for i := 0; i < limit; i++ {
-			if err := validateTypedNested(target.Index(i), items[i], fmt.Sprintf("%s[%d]", path, i), unknownPolicy, issues); err != nil {
+			if err := validateTypedNested(target.Index(i), items[i], fmt.Sprintf("%s[%d]", path, i), unknownPolicy, issues, context); err != nil {
 				return err
 			}
 		}
@@ -287,14 +362,14 @@ func formatNumber(value float64) string {
 	return fmt.Sprintf("%g", value)
 }
 
-func assignValue(target reflect.Value, raw any, path string, unknownPolicy UnknownArgumentPolicy, issues *[]ToolArgumentIssue) error {
+func assignValue(target reflect.Value, raw any, path string, unknownPolicy UnknownArgumentPolicy, issues *[]ToolArgumentIssue, context *bindingContext) error {
 	if !target.CanSet() {
 		return fmt.Errorf("%s is not assignable", path)
 	}
 	targetType := target.Type()
 	if targetType.Kind() == reflect.Pointer {
 		elem := reflect.New(targetType.Elem())
-		if err := assignValue(elem.Elem(), raw, path, unknownPolicy, issues); err != nil {
+		if err := assignValue(elem.Elem(), raw, path, unknownPolicy, issues, context); err != nil {
 			return err
 		}
 		target.Set(elem)
@@ -341,7 +416,7 @@ func assignValue(target reflect.Value, raw any, path string, unknownPolicy Unkno
 		if !ok {
 			return fmt.Errorf("%s must be an object", path)
 		}
-		return bindStruct(target, obj, path, unknownPolicy, issues)
+		return bindStructWithContext(target, obj, path, unknownPolicy, issues, context)
 	case reflect.Slice:
 		items, ok := raw.([]any)
 		if !ok {
@@ -350,7 +425,7 @@ func assignValue(target reflect.Value, raw any, path string, unknownPolicy Unkno
 		slice := reflect.MakeSlice(targetType, 0, len(items))
 		for i, item := range items {
 			elem := reflect.New(targetType.Elem()).Elem()
-			if err := assignValue(elem, item, fmt.Sprintf("%s[%d]", path, i), unknownPolicy, issues); err != nil {
+			if err := assignValue(elem, item, fmt.Sprintf("%s[%d]", path, i), unknownPolicy, issues, context); err != nil {
 				return err
 			}
 			slice = reflect.Append(slice, elem)
@@ -360,6 +435,14 @@ func assignValue(target reflect.Value, raw any, path string, unknownPolicy Unkno
 	default:
 		return fmt.Errorf("%s has unsupported type %s", path, targetType.String())
 	}
+}
+
+func restoreRecursionDepth(depths map[recursionField]int, key recursionField, previous int) {
+	if previous == 0 {
+		delete(depths, key)
+		return
+	}
+	depths[key] = previous
 }
 
 func numericValue(raw any) (int64, bool) {

@@ -453,7 +453,7 @@ Phase one supports OpenAI image generation only and returns `b64_json` image pay
 
 ## Tool Calling
 
-Tools are strongly typed with Go structs. JSON field names follow `encoding/json`: use a `json` tag for a stable model-facing name, otherwise the Go field name is used. Use the `tool` tag only for descriptions, required fields, enums, and validation constraints.
+Tools are strongly typed with Go structs. JSON field names follow `encoding/json`: use a `json` tag for a stable model-facing name, otherwise the Go field name is used. Use the `tool` tag only for descriptions, required fields, enums, validation constraints, and recursive depth limits.
 
 ```go
 type WeatherArgs struct {
@@ -499,6 +499,17 @@ engine := easyllm.NewEngine(
 	easyllm.WithTools(weatherTool),
 )
 ```
+
+Recursive structs are supported when the recursive field declares `maxDepth`:
+
+```go
+type Node struct {
+	Name     string `json:"name"`
+	Children []Node `json:"children" tool:"maxDepth=2"`
+}
+```
+
+`maxDepth` counts recursive edges, not node layers. `maxDepth=2` permits `root -> child -> grandchild`; the grandchild's `children` property is omitted from the generated schema. Therefore, a caller that wants 8 node layers (for example, an existing `maxProofreadStructureDepth=8` setting) should use `maxDepth=7`. The value must be at least `1`. A recursive field without `maxDepth`, an invalid value, or `maxDepth` on a non-recursive field returns an error. Runtime binding applies the same limit and reports an error for input that exceeds it.
 
 Model-side and local tool parallelism are configured separately. `ParallelToolCalls`
 controls whether an OpenAI-compatible model may return multiple calls in one
