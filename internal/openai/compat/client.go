@@ -225,6 +225,7 @@ func (c *Client) generateChat(ctx context.Context, req model.ModelRequest) (*mod
 	if req.ToolChoice != nil {
 		body["tool_choice"] = openAIChatToolChoice(*req.ToolChoice)
 	}
+	thinkingToolChoiceCompat(body)
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("marshal chat request: %w", err)
@@ -250,6 +251,7 @@ func (c *Client) generateResponses(ctx context.Context, req model.ModelRequest) 
 	if req.ToolChoice != nil {
 		body["tool_choice"] = openAIResponsesToolChoice(*req.ToolChoice)
 	}
+	thinkingToolChoiceCompat(body)
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("marshal responses request: %w", err)
@@ -667,6 +669,53 @@ func openAIResponsesToolChoice(choice model.ToolChoice) any {
 		"type": "function",
 		"name": choice.ToolName(),
 	}
+}
+
+// thinkingToolChoiceCompat reconciles two request features that some
+// OpenAI-compatible providers reject in combination. When a request explicitly
+// enables a thinking mode and also forces tool selection (tool_choice
+// "required" or an object naming a specific function), providers such as
+// DashScope/Qwen and native DeepSeek return HTTP 400, e.g. DashScope's
+// "The tool_choice parameter does not support being set to required or object
+// in thinking mode". Automatic tool selection remains valid there, so the
+// forced choice is dropped and the provider default ("auto") applies.
+//
+// Only explicit request flags are considered:
+//   - "enable_thinking": true               (Qwen / DashScope-style endpoints)
+//   - "thinking": {"type": "enabled"}      (native DeepSeek)
+//
+// Models that enable thinking by default without one of these flags on the
+// wire cannot be detected here.
+func thinkingToolChoiceCompat(body map[string]any) {
+	if !thinkingExplicitlyEnabled(body) {
+		return
+	}
+	choice, ok := body["tool_choice"]
+	if !ok {
+		return
+	}
+	switch current := choice.(type) {
+	case string:
+		if current != "required" {
+			return
+		}
+	case map[string]any, map[string]string:
+	default:
+		return
+	}
+	delete(body, "tool_choice")
+}
+
+func thinkingExplicitlyEnabled(body map[string]any) bool {
+	if enabled, ok := body["enable_thinking"].(bool); ok && enabled {
+		return true
+	}
+	if thinking, ok := body["thinking"].(map[string]any); ok {
+		if kind, ok := thinking["type"].(string); ok && kind == "enabled" {
+			return true
+		}
+	}
+	return false
 }
 
 func textPartsToString(parts []model.TextPart) string {

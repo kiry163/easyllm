@@ -139,6 +139,8 @@ if err != nil {
 
 `EnableThinking` is currently a provider-level compatibility flag. Built-in providers map it only when they support a provider-specific thinking switch. Today that mainly applies to Qwen and DeepSeek.
 
+Thinking mode and forced tool selection are incompatible on several OpenAI-compatible providers: DashScope/Qwen and DeepSeek reject `tool_choice: "required"` (and the object form that forces a specific tool) with an HTTP 400 while thinking is enabled. When an assembled request explicitly enables thinking and also forces a tool, `easyllm` automatically drops the forced choice so the provider default (automatic selection) applies; thinking stays enabled and the model is normally still able to call the tool. The adaptation keys off explicit request flags only: `enable_thinking: true` (Qwen / DashScope-style endpoints) and `thinking: {"type":"enabled"}` (DeepSeek). It applies on the chat, responses, and streaming transports alike. Models that enable thinking by default without one of these flags on the wire are not detected; force a specific tool there by disabling thinking explicitly.
+
 Provider-specific request body fields can be passed through `ExtraBody`. Values in `ExtraBody` are merged after normalized config fields, so they can override the final request body.
 
 ```go
