@@ -22,6 +22,8 @@ type Engine struct {
 	stopToolReminder      *int
 	toolChoice            *ToolChoice
 	currentTime           *currentTimeRuntime
+	pricer                Pricer
+	now                   func() time.Time
 }
 
 // CurrentTimeConfig controls the time context injected by an Engine.
@@ -158,11 +160,21 @@ func WithCurrentTime(config CurrentTimeConfig) EngineOption {
 	}
 }
 
+// WithPricing attaches a price list to the Engine. Every model call is priced
+// at the instant it completes, and the result is added to the run and session
+// usage. A nil Pricer disables cost tracking, which is the default.
+func WithPricing(pricer Pricer) EngineOption {
+	return func(e *Engine) {
+		e.pricer = pricer
+	}
+}
+
 func NewEngine(client Client, opts ...EngineOption) *Engine {
 	engine := &Engine{
 		client:                client,
 		maxModelCalls:         3,
 		parallelToolExecution: true,
+		now:                   time.Now,
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -202,6 +214,8 @@ func (e *Engine) Run(ctx context.Context, req RunRequest) (*RunResult, error) {
 		stopToolReminder:      e.stopToolReminder,
 		toolChoice:            e.toolChoice,
 		requestItems:          e.currentTimeItems(req.CurrentTimeLocation),
+		pricer:                e.pricer,
+		now:                   e.now,
 	})
 }
 
@@ -235,6 +249,8 @@ func (e *Engine) RunStream(ctx context.Context, req RunRequest, handler StreamHa
 		stopToolReminder:      e.stopToolReminder,
 		toolChoice:            e.toolChoice,
 		requestItems:          e.currentTimeItems(req.CurrentTimeLocation),
+		pricer:                e.pricer,
+		now:                   e.now,
 	})
 }
 

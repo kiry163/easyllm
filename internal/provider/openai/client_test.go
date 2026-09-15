@@ -7,8 +7,11 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/kiry163/easyllm/internal/model"
 )
 
 func TestChatClientRetriesAndNormalizesToolCalls(t *testing.T) {
@@ -429,6 +432,81 @@ func TestChatClientParsesCachedUsageDetails(t *testing.T) {
 	}
 	if resp.Usage.CachedInputTokens != 5 {
 		t.Fatalf("unexpected cached tokens: %+v", resp.Usage)
+	}
+}
+
+func TestClientReportsResolvedModel(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := ioReadAll(r)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		if bytes.Contains(body, []byte(`"stream":true`)) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte(strings.Join([]string{
+				`data: {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}`,
+				``,
+				`data: [DONE]`,
+				``,
+			}, "\n")))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{
+					"message":       map[string]any{"content": "done"},
+					"finish_reason": "stop",
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := NewProvider(WithAPIKey("token"), WithBaseURL(server.URL)).ChatClient(ChatClientConfig{Model: "default-model"})
+
+	tests := []struct {
+		name    string
+		request ModelRequest
+		want    string
+	}{
+		{
+			name:    "request model wins",
+			request: ModelRequest{Model: "override-model", Input: []InputItem{UserMessageItem{Content: []TextPart{{Text: "hello"}}}}},
+			want:    "override-model",
+		},
+		{
+			name:    "config model is the fallback",
+			request: ModelRequest{Input: []InputItem{UserMessageItem{Content: []TextPart{{Text: "hello"}}}}},
+			want:    "default-model",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, err := client.Generate(context.Background(), tt.request)
+			if err != nil {
+				t.Fatalf("Generate returned error: %v", err)
+			}
+			if resp.Model != tt.want {
+				t.Fatalf("unexpected model: %q", resp.Model)
+			}
+		})
+	}
+
+	var streamed *model.ModelResponse
+	err := client.GenerateStream(context.Background(), ModelRequest{
+		Model: "override-model",
+		Input: []InputItem{UserMessageItem{Content: []TextPart{{Text: "hello"}}}},
+	}, func(event model.StreamEvent) error {
+		if event.Type == model.StreamEventDone {
+			streamed, _ = event.Raw.(*model.ModelResponse)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("GenerateStream returned error: %v", err)
+	}
+	if streamed == nil || streamed.Model != "override-model" {
+		t.Fatalf("unexpected streamed model: %+v", streamed)
 	}
 }
 

@@ -277,6 +277,125 @@ easyllm.Engine.Run
   -> easyllm.Client.Generate
 ```
 
+### Cost Tracking
+
+`WithPricing(...)` prices every model call and reports the result on
+`RunResult.Usage`. Costs are plain `float64` amounts in a currency you choose;
+the library performs no conversion.
+
+```go
+engine := easyllm.NewEngine(
+	client,
+	easyllm.WithPricing(easyllm.SimplePricing(easyllm.Rates{
+		Input:       2, // per million tokens
+		Output:      8,
+		CachedInput: 0.5,
+	})),
+)
+
+result, err := engine.Run(ctx, easyllm.RunRequest{Input: "hello"})
+fmt.Println(result.Usage.TotalCost)
+```
+
+Cached input tokens are a subset of input tokens, so `InputCost` covers the
+uncached remainder only:
+
+```text
+InputCost       = (InputTokens - CachedInputTokens) * Input       / 1e6
+CachedInputCost = CachedInputTokens                 * CachedInput / 1e6
+OutputCost      = OutputTokens                      * Output      / 1e6
+TotalCost       = InputCost + OutputCost + CachedInputCost
+```
+
+`TotalCost` is derived and always equals the sum of the three components.
+
+#### Peak and Off-Peak Rates
+
+`NewPricing(...)` adds recurring time windows that override the base rates. The
+first matching window wins. Windows are evaluated in `Asia/Shanghai` unless
+`Location` says otherwise.
+
+```go
+pricing, err := easyllm.NewPricing(easyllm.PricingConfig{
+	Rates: easyllm.Rates{Input: 2, Output: 8, CachedInput: 0.5}, // peak
+	Windows: []easyllm.RateWindow{{
+		Start: "00:30",
+		End:   "08:30",
+		Rates: easyllm.Rates{Input: 1, Output: 4, CachedInput: 0.25}, // off-peak
+	}},
+})
+if err != nil {
+	panic(err)
+}
+
+engine := easyllm.NewEngine(client, easyllm.WithPricing(pricing))
+```
+
+`Start` is inclusive and `End` is exclusive. An `End` at or before `Start` wraps
+past midnight, so `"22:00"`–`"06:00"` covers one night. `"24:00"` is accepted as
+`End` for a whole-day window. `Weekdays` limits a window to the days it opens on:
+a window opening Monday 22:00 also covers Tuesday 02:00, while Monday 02:00
+belongs to Sunday and does not match.
+
+```go
+easyllm.RateWindow{
+	Start:    "22:00",
+	End:      "06:00",
+	Weekdays: []time.Weekday{time.Monday, time.Tuesday, time.Wednesday, time.Thursday, time.Friday},
+	Rates:    easyllm.Rates{Input: 1, Output: 4, CachedInput: 0.25},
+}
+```
+
+`NewPricing(...)` rejects malformed windows, negative rates, and out-of-range
+weekdays, so a bad price list fails at startup rather than mid-run.
+
+#### Loading Pricing From JSON
+
+```json
+{
+  "location": "Asia/Shanghai",
+  "rates": {"input": 2, "output": 8, "cached_input": 0.5},
+  "windows": [
+    {
+      "start": "00:30",
+      "end": "08:30",
+      "weekdays": [1, 2, 3, 4, 5],
+      "rates": {"input": 1, "output": 4, "cached_input": 0.25}
+    }
+  ]
+}
+```
+
+```go
+pricing, err := easyllm.NewPricingJSON(text)
+```
+
+`weekdays` uses `time.Weekday` numbers, `0` for Sunday through `6` for Saturday.
+An omitted `location` uses `Asia/Shanghai`. Unknown fields are rejected, so a
+misspelled key cannot silently fall back to base rates.
+
+#### Custom Pricing
+
+Implement `Pricer`, or wrap a function with `PricerFunc`, when prices come from
+another source or depend on more than time. `Model` and `Provider` are set only
+when the client reports them.
+
+```go
+engine := easyllm.NewEngine(client, easyllm.WithPricing(easyllm.PricerFunc(
+	func(in easyllm.CostInput) easyllm.Cost {
+		return myPriceList.Lookup(in.Model, in.Time)
+	},
+)))
+```
+
+A `Pricer` returns a zero `Cost` for anything it cannot price: a missing price
+must not fail a run that has already spent tokens.
+
+Costs aggregate exactly like tokens. Every model call is priced at the instant
+it completes, so a tool loop that crosses a rate boundary is charged per call.
+`RunResult.Usage` covers the current run; `Session.Usage` and
+`RunResult.Session.Usage` accumulate across the session.
+
 ### Multimodal Input
 
 Use `InputParts` when a user message needs text plus image resources. Image URLs may be remote URLs or provider-supported data URLs.
@@ -601,11 +720,17 @@ type Usage struct {
 	OutputTokens      int
 	TotalTokens       int
 	CachedInputTokens int
+	InputCost         float64
+	OutputCost        float64
+	CachedInputCost   float64
+	TotalCost         float64
 	Details           map[string]any
 }
 ```
 
 `RunResult.Usage` is scoped to the current run. `Session` and `SessionSnapshot` keep cumulative usage across the life of the session.
+
+The cost fields are always present. They stay zero unless the engine is given a `WithPricing(...)` price list.
 
 ## Custom Providers
 
@@ -631,6 +756,8 @@ type CustomClient struct{}
 func (CustomClient) Generate(ctx context.Context, req easyllm.ModelRequest) (*easyllm.ModelResponse, error) {
 	// Call your provider and return provider-neutral output items.
 	return &easyllm.ModelResponse{
+		// Report the served model so a model-aware Pricer can see it.
+		Model: "custom-model",
 		Output: []easyllm.OutputItem{
 			easyllm.AssistantOutput{
 				Role:    "assistant",

@@ -48,7 +48,7 @@ func (c *Client) generateChatStream(ctx context.Context, req model.ModelRequest,
 	if err != nil {
 		return nil, fmt.Errorf("marshal chat request: %w", err)
 	}
-	return c.doStream(ctx, payload, "/chat/completions", c.parseChatStream(handler))
+	return c.doStream(ctx, payload, "/chat/completions", c.resolveModel(req.Model), c.parseChatStream(handler))
 }
 
 func (c *Client) generateResponsesStream(ctx context.Context, req model.ModelRequest, handler model.StreamHandler) (*model.ModelResponse, error) {
@@ -74,10 +74,10 @@ func (c *Client) generateResponsesStream(ctx context.Context, req model.ModelReq
 	if err != nil {
 		return nil, fmt.Errorf("marshal responses request: %w", err)
 	}
-	return c.doStream(ctx, payload, "/responses", c.parseResponsesStream(handler))
+	return c.doStream(ctx, payload, "/responses", c.resolveModel(req.Model), c.parseResponsesStream(handler))
 }
 
-func (c *Client) doStream(ctx context.Context, payload []byte, path string, parse func(context.Context, io.Reader) (*model.ModelResponse, bool, error)) (*model.ModelResponse, error) {
+func (c *Client) doStream(ctx context.Context, payload []byte, path, resolvedModel string, parse func(context.Context, io.Reader) (*model.ModelResponse, bool, error)) (*model.ModelResponse, error) {
 	var lastErr error
 	for attempt := 1; attempt <= c.retry.maxRetries()+1; attempt++ {
 		streamCtx, cancel := context.WithCancel(ctx)
@@ -124,6 +124,7 @@ func (c *Client) doStream(ctx context.Context, payload []byte, path string, pars
 			return nil, closeErr
 		}
 		out.Provider = c.providerName
+		out.Model = resolvedModel
 		out.RetryCount = attempt - 1
 		return out, nil
 	}

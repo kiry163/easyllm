@@ -1319,6 +1319,11 @@ func TestRunResultJSONUsesStableFieldNames(t *testing.T) {
 		`"raw_arguments"`,
 		`"input_tokens"`,
 		`"cached_input_tokens"`,
+		`"input_cost"`,
+		`"output_cost"`,
+		`"cached_input_cost"`,
+		`"total_cost"`,
+		`"model"`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected marshaled JSON to contain %s: %s", want, text)
@@ -1333,11 +1338,262 @@ func TestRunResultJSONUsesStableFieldNames(t *testing.T) {
 		`"FinishReason"`,
 		`"CallID"`,
 		`"InputTokens"`,
+		`"InputCost"`,
+		`"CachedInputCost"`,
+		`"TotalCost"`,
 	} {
 		if strings.Contains(text, unwanted) {
 			t.Fatalf("expected marshaled JSON to avoid %s: %s", unwanted, text)
 		}
 	}
+}
+
+type pricingUsageClient struct {
+	calls int
+}
+
+func (c *pricingUsageClient) Generate(ctx context.Context, req model.ModelRequest) (*model.ModelResponse, error) {
+	c.calls++
+	return &model.ModelResponse{
+		Model:    "priced-model",
+		Provider: "priced-provider",
+		Output: []model.OutputItem{
+			model.AssistantOutput{
+				Role:    "assistant",
+				Content: []model.TextPart{{Text: "done"}},
+			},
+		},
+		FinishReason: "stop",
+		Usage: model.Usage{
+			InputTokens:       1_000_000,
+			OutputTokens:      1_000_000,
+			TotalTokens:       2_000_000,
+			CachedInputTokens: 400_000,
+		},
+	}, nil
+}
+
+func (c *pricingUsageClient) GenerateStream(ctx context.Context, req model.ModelRequest, handler model.StreamHandler) error {
+	resp, err := c.Generate(ctx, req)
+	if err != nil {
+		return err
+	}
+	if handler != nil {
+		if err := handler(model.StreamEvent{Type: model.StreamEventDone, Raw: resp}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type toolPricingClient struct {
+	calls int
+}
+
+func (c *toolPricingClient) Generate(ctx context.Context, req model.ModelRequest) (*model.ModelResponse, error) {
+	c.calls++
+	if c.calls > 1 {
+		return &model.ModelResponse{
+			Output: []model.OutputItem{
+				model.AssistantOutput{
+					Role:    "assistant",
+					Content: []model.TextPart{{Text: "done"}},
+				},
+			},
+			FinishReason: "stop",
+			Usage:        model.Usage{InputTokens: 1_000_000, TotalTokens: 1_000_000},
+		}, nil
+	}
+	return &model.ModelResponse{
+		Output: []model.OutputItem{
+			model.AssistantOutput{
+				Role: "assistant",
+				ToolCalls: []model.ToolCallOutput{
+					{CallID: "call_1", Name: "submit", RawArguments: `{"value":"ok"}`},
+				},
+			},
+		},
+		FinishReason: "tool_calls",
+		Usage:        model.Usage{InputTokens: 1_000_000, TotalTokens: 1_000_000},
+	}, nil
+}
+
+func (c *toolPricingClient) GenerateStream(ctx context.Context, req model.ModelRequest, handler model.StreamHandler) error {
+	resp, err := c.Generate(ctx, req)
+	if err != nil {
+		return err
+	}
+	if handler != nil {
+		if err := handler(model.StreamEvent{Type: model.StreamEventDone, Raw: resp}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func TestRunAppliesPricingToRunAndSessionUsage(t *testing.T) {
+	runtime := NewEngine(
+		&pricingUsageClient{},
+		WithPricing(SimplePricing(Rates{Input: 2, Output: 8, CachedInput: 0.5})),
+	)
+
+	result, err := runtime.Run(context.Background(), RunRequest{Input: "hello"})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	assertCost(t, "input cost", result.Usage.InputCost, 1.2)
+	assertCost(t, "cached input cost", result.Usage.CachedInputCost, 0.2)
+	assertCost(t, "output cost", result.Usage.OutputCost, 8)
+	assertCost(t, "total cost", result.Usage.TotalCost, 9.4)
+	assertCost(t, "session input cost", result.Session.Usage.InputCost, 1.2)
+	assertCost(t, "session total cost", result.Session.Usage.TotalCost, 9.4)
+}
+
+func TestRunStreamAppliesPricingToUsage(t *testing.T) {
+	runtime := NewEngine(
+		&pricingUsageClient{},
+		WithPricing(SimplePricing(Rates{Input: 2, Output: 8, CachedInput: 0.5})),
+	)
+
+	result, err := runtime.RunStream(context.Background(), RunRequest{Input: "hello"}, nil)
+	if err != nil {
+		t.Fatalf("RunStream returned error: %v", err)
+	}
+
+	assertCost(t, "input cost", result.Usage.InputCost, 1.2)
+	assertCost(t, "cached input cost", result.Usage.CachedInputCost, 0.2)
+	assertCost(t, "output cost", result.Usage.OutputCost, 8)
+	assertCost(t, "total cost", result.Usage.TotalCost, 9.4)
+}
+
+func TestRunWithoutPricingLeavesCostsZero(t *testing.T) {
+	tests := []struct {
+		name    string
+		options []EngineOption
+	}{
+		{"no pricing configured", nil},
+		{"nil pricer", []EngineOption{WithPricing(nil)}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runtime := NewEngine(&pricingUsageClient{}, tt.options...)
+
+			result, err := runtime.Run(context.Background(), RunRequest{Input: "hello"})
+			if err != nil {
+				t.Fatalf("Run returned error: %v", err)
+			}
+
+			assertCost(t, "input cost", result.Usage.InputCost, 0)
+			assertCost(t, "cached input cost", result.Usage.CachedInputCost, 0)
+			assertCost(t, "output cost", result.Usage.OutputCost, 0)
+			assertCost(t, "total cost", result.Usage.TotalCost, 0)
+		})
+	}
+}
+
+type providerTotalCostClient struct{}
+
+func (providerTotalCostClient) Generate(ctx context.Context, req model.ModelRequest) (*model.ModelResponse, error) {
+	return &model.ModelResponse{
+		Output: []model.OutputItem{
+			model.AssistantOutput{
+				Role:    "assistant",
+				Content: []model.TextPart{{Text: "done"}},
+			},
+		},
+		FinishReason: "stop",
+		Usage: model.Usage{
+			InputTokens: 100,
+			TotalTokens: 100,
+			TotalCost:   99,
+		},
+	}, nil
+}
+
+func (c providerTotalCostClient) GenerateStream(ctx context.Context, req model.ModelRequest, handler model.StreamHandler) error {
+	resp, err := c.Generate(ctx, req)
+	if err != nil {
+		return err
+	}
+	if handler != nil {
+		if err := handler(model.StreamEvent{Type: model.StreamEventDone, Raw: resp}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func TestRunDerivesTotalCostFromComponents(t *testing.T) {
+	runtime := NewEngine(providerTotalCostClient{})
+
+	result, err := runtime.Run(context.Background(), RunRequest{Input: "hello"})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	assertCost(t, "input cost", result.Usage.InputCost, 0)
+	assertCost(t, "total cost", result.Usage.TotalCost, 0)
+	assertCost(t, "session total cost", result.Session.Usage.TotalCost, 0)
+}
+
+func TestRunPricesEachModelCallAtItsOwnTime(t *testing.T) {
+	runTool, err := NewTool[submitArgs](submitTool{})
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+	location := testLocation()
+	pricing, err := NewPricing(PricingConfig{
+		Location: location,
+		Rates:    Rates{Input: 2},
+		Windows: []RateWindow{{
+			Start: "00:30",
+			End:   "08:30",
+			Rates: Rates{Input: 1},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("NewPricing returned error: %v", err)
+	}
+	times := []time.Time{
+		time.Date(2026, time.March, 9, 10, 0, 0, 0, location),
+		time.Date(2026, time.March, 10, 4, 0, 0, 0, location),
+	}
+	index := 0
+	var perCallCosts []float64
+	runtime := NewEngine(
+		&toolPricingClient{},
+		WithTools(runTool),
+		WithPricing(pricing),
+		WithHooks(Hooks{
+			OnModelResponse: func(event ModelResponseEvent) error {
+				perCallCosts = append(perCallCosts, event.Response.Usage.TotalCost)
+				return nil
+			},
+		}),
+	)
+	runtime.now = func() time.Time {
+		current := times[index]
+		if index < len(times)-1 {
+			index++
+		}
+		return current
+	}
+
+	result, err := runtime.Run(context.Background(), RunRequest{Input: "submit"})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	if result.ModelCallCount != 2 {
+		t.Fatalf("unexpected model call count: %d", result.ModelCallCount)
+	}
+	assertCost(t, "total cost", result.Usage.TotalCost, 3)
+	if len(perCallCosts) != 2 {
+		t.Fatalf("unexpected hook call count: %d", len(perCallCosts))
+	}
+	assertCost(t, "first call cost", perCallCosts[0], 2)
+	assertCost(t, "second call cost", perCallCosts[1], 1)
 }
 
 type errorClient struct{}

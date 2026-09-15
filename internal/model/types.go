@@ -5,6 +5,10 @@ type Usage struct {
 	OutputTokens      int            `json:"output_tokens"`
 	TotalTokens       int            `json:"total_tokens"`
 	CachedInputTokens int            `json:"cached_input_tokens"`
+	InputCost         float64        `json:"input_cost"`
+	OutputCost        float64        `json:"output_cost"`
+	CachedInputCost   float64        `json:"cached_input_cost"`
+	TotalCost         float64        `json:"total_cost"`
 	Details           map[string]any `json:"details"`
 }
 
@@ -168,6 +172,9 @@ type ModelResponse struct {
 	Usage        Usage        `json:"usage"`
 	ResponseID   string       `json:"response_id"`
 	Provider     string       `json:"provider"`
-	RetryCount   int          `json:"retry_count"`
-	Raw          any          `json:"raw"`
+	// Model is the model that served the request. Clients that cannot resolve a
+	// model name leave it empty.
+	Model      string `json:"model"`
+	RetryCount int    `json:"retry_count"`
+	Raw        any    `json:"raw"`
 }

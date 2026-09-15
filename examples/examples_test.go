@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/kiry163/easyllm"
 )
@@ -432,6 +433,91 @@ func Example_newClient() {
 
 	// Output:
 	// true
+}
+
+type usageReportingClient struct{}
+
+func (usageReportingClient) Generate(ctx context.Context, req easyllm.ModelRequest) (*easyllm.ModelResponse, error) {
+	return &easyllm.ModelResponse{
+		Model:        "example-model",
+		Provider:     "example",
+		Output:       []easyllm.OutputItem{easyllm.AssistantOutput{Role: "assistant", Content: []easyllm.TextPart{{Text: "done"}}}},
+		FinishReason: "stop",
+		Usage: easyllm.Usage{
+			InputTokens:       1_000_000,
+			OutputTokens:      500_000,
+			TotalTokens:       1_500_000,
+			CachedInputTokens: 400_000,
+		},
+	}, nil
+}
+
+func (c usageReportingClient) GenerateStream(ctx context.Context, req easyllm.ModelRequest, handler easyllm.StreamHandler) error {
+	resp, err := c.Generate(ctx, req)
+	if err != nil {
+		return err
+	}
+	if handler != nil {
+		return handler(easyllm.StreamEvent{Type: easyllm.StreamEventDone, Raw: resp})
+	}
+	return nil
+}
+
+func Example_costTracking() {
+	engine := easyllm.NewEngine(
+		usageReportingClient{},
+		easyllm.WithPricing(easyllm.SimplePricing(easyllm.Rates{
+			Input:       2, // per million tokens
+			Output:      8,
+			CachedInput: 0.5,
+		})),
+	)
+
+	result, err := engine.Run(context.Background(), easyllm.RunRequest{Input: "hello"})
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Printf("input=%.4f cached=%.4f output=%.4f total=%.4f\n",
+		result.Usage.InputCost,
+		result.Usage.CachedInputCost,
+		result.Usage.OutputCost,
+		result.Usage.TotalCost,
+	)
+
+	// Output:
+	// input=1.2000 cached=0.2000 output=4.0000 total=5.4000
+}
+
+func Example_newPricingJSON() {
+	pricing, err := easyllm.NewPricingJSON(`{
+		"location": "Asia/Shanghai",
+		"rates": {"input": 2, "output": 8, "cached_input": 0.5},
+		"windows": [
+			{
+				"start": "00:30",
+				"end": "08:30",
+				"rates": {"input": 1, "output": 4, "cached_input": 0.25}
+			}
+		]
+	}`)
+	if err != nil {
+		panic(err)
+	}
+
+	peak := pricing.Price(easyllm.CostInput{
+		InputTokens: 1_000_000,
+		Time:        time.Date(2026, time.March, 9, 12, 0, 0, 0, time.UTC), // 20:00 in Shanghai
+	})
+	offPeak := pricing.Price(easyllm.CostInput{
+		InputTokens: 1_000_000,
+		Time:        time.Date(2026, time.March, 9, 0, 0, 0, 0, time.UTC), // 08:00 in Shanghai
+	})
+
+	fmt.Printf("peak=%.2f off-peak=%.2f\n", peak.Input, offPeak.Input)
+
+	// Output:
+	// peak=2.00 off-peak=1.00
 }
 
 func messageResponse(text string) *easyllm.ModelResponse {

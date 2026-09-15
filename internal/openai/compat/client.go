@@ -230,7 +230,7 @@ func (c *Client) generateChat(ctx context.Context, req model.ModelRequest) (*mod
 	if err != nil {
 		return nil, fmt.Errorf("marshal chat request: %w", err)
 	}
-	return c.do(ctx, payload, "/chat/completions", parseChatResponse)
+	return c.do(ctx, payload, "/chat/completions", c.resolveModel(req.Model), parseChatResponse)
 }
 
 func (c *Client) generateResponses(ctx context.Context, req model.ModelRequest) (*model.ModelResponse, error) {
@@ -256,10 +256,10 @@ func (c *Client) generateResponses(ctx context.Context, req model.ModelRequest) 
 	if err != nil {
 		return nil, fmt.Errorf("marshal responses request: %w", err)
 	}
-	return c.do(ctx, payload, "/responses", parseResponsesResponse)
+	return c.do(ctx, payload, "/responses", c.resolveModel(req.Model), parseResponsesResponse)
 }
 
-func (c *Client) do(ctx context.Context, payload []byte, path string, parse func(io.Reader) (*model.ModelResponse, error)) (*model.ModelResponse, error) {
+func (c *Client) do(ctx context.Context, payload []byte, path, resolvedModel string, parse func(io.Reader) (*model.ModelResponse, error)) (*model.ModelResponse, error) {
 	var lastErr error
 	for attempt := 1; attempt <= c.retry.maxRetries()+1; attempt++ {
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(payload))
@@ -292,11 +292,8 @@ func (c *Client) do(ctx context.Context, payload []byte, path string, parse func
 		if err != nil {
 			return nil, err
 		}
-		if out.Provider == "" {
-			out.Provider = c.providerName
-		} else {
-			out.Provider = c.providerName
-		}
+		out.Provider = c.providerName
+		out.Model = resolvedModel
 		out.RetryCount = attempt - 1
 		return out, nil
 	}

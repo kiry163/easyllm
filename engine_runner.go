@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/kiry163/easyllm/internal/model"
 )
@@ -20,6 +21,8 @@ type runConfig struct {
 	stopToolReminder      *int
 	toolChoice            *ToolChoice
 	requestItems          []model.InputItem
+	pricer                Pricer
+	now                   func() time.Time
 }
 
 type StopReason string
@@ -341,6 +344,7 @@ func run(ctx context.Context, client Client, session *Session, metadata map[stri
 		result.ModelCallCount++
 		session.Iteration = iteration
 		session.LastResponse = resp
+		applyCost(resp, cfg)
 		addUsage(&session.Usage, resp.Usage)
 		addUsage(&result.Usage, resp.Usage)
 		result.RetryCount += resp.RetryCount
@@ -465,6 +469,7 @@ func runStream(ctx context.Context, client Client, session *Session, metadata ma
 		result.ModelCallCount++
 		session.Iteration = iteration
 		session.LastResponse = resp
+		applyCost(resp, cfg)
 		addUsage(&session.Usage, resp.Usage)
 		addUsage(&result.Usage, resp.Usage)
 		result.RetryCount += resp.RetryCount
@@ -618,11 +623,36 @@ func outputItemsToInputItems(items []model.OutputItem) []model.InputItem {
 	return out
 }
 
+// applyCost prices one model call and folds the result into the response usage,
+// so the per-call cost is visible to response hooks and to session snapshots.
+// TotalCost always equals the sum of the three components.
+func applyCost(resp *ModelResponse, cfg runConfig) {
+	if cfg.pricer == nil {
+		return
+	}
+	cost := cfg.pricer.Price(CostInput{
+		Provider:          resp.Provider,
+		Model:             resp.Model,
+		InputTokens:       resp.Usage.InputTokens,
+		OutputTokens:      resp.Usage.OutputTokens,
+		CachedInputTokens: resp.Usage.CachedInputTokens,
+		Time:              cfg.now(),
+	})
+	resp.Usage.InputCost += cost.Input
+	resp.Usage.OutputCost += cost.Output
+	resp.Usage.CachedInputCost += cost.CachedInput
+	resp.Usage.TotalCost = resp.Usage.InputCost + resp.Usage.OutputCost + resp.Usage.CachedInputCost
+}
+
 func addUsage(dst *model.Usage, src model.Usage) {
 	dst.InputTokens += src.InputTokens
 	dst.OutputTokens += src.OutputTokens
 	dst.TotalTokens += src.TotalTokens
 	dst.CachedInputTokens += src.CachedInputTokens
+	dst.InputCost += src.InputCost
+	dst.OutputCost += src.OutputCost
+	dst.CachedInputCost += src.CachedInputCost
+	dst.TotalCost = dst.InputCost + dst.OutputCost + dst.CachedInputCost
 	if len(src.Details) == 0 {
 		return
 	}
