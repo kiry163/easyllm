@@ -225,7 +225,7 @@ func (c *Client) generateChat(ctx context.Context, req model.ModelRequest) (*mod
 	if req.ToolChoice != nil {
 		body["tool_choice"] = openAIChatToolChoice(*req.ToolChoice)
 	}
-	thinkingToolChoiceCompat(body)
+	thinkingToolChoiceCompat(c.transport, body)
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("marshal chat request: %w", err)
@@ -251,7 +251,7 @@ func (c *Client) generateResponses(ctx context.Context, req model.ModelRequest) 
 	if req.ToolChoice != nil {
 		body["tool_choice"] = openAIResponsesToolChoice(*req.ToolChoice)
 	}
-	thinkingToolChoiceCompat(body)
+	thinkingToolChoiceCompat(c.transport, body)
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("marshal responses request: %w", err)
@@ -393,6 +393,12 @@ func openAIResponsesInput(items []model.InputItem) []map[string]any {
 		case model.UserMessageItem:
 			out = append(out, map[string]any{"role": "user", "content": openAIResponsesInputContent(current.Content)})
 		case model.AssistantMessageItem:
+			if current.ReasoningContent != "" {
+				out = append(out, map[string]any{
+					"type":    "reasoning",
+					"content": []map[string]any{{"type": "reasoning_text", "text": current.ReasoningContent}},
+				})
+			}
 			out = append(out, map[string]any{"role": "assistant", "content": []map[string]any{{"type": "output_text", "text": textPartsToString(current.Content)}}})
 			for _, call := range current.ToolCalls {
 				out = append(out, map[string]any{"type": "function_call", "call_id": call.CallID, "name": call.Name, "arguments": toolArgumentsString(call.RawArguments)})
@@ -547,9 +553,21 @@ func parseChatResponse(r io.Reader) (*model.ModelResponse, error) {
 	return out, nil
 }
 
+// parseResponsesResponse maps one responses payload onto the shared model. A
+// response lists its output as a flat stream of items (reasoning, message,
+// function_call), so consecutive items are folded into a single assistant turn;
+// a new turn starts at the next reasoning item or at a second message item.
 func parseResponsesResponse(r io.Reader) (*model.ModelResponse, error) {
 	var raw struct {
 		ID     string `json:"id"`
+		Status string `json:"status"`
+		Error  *struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+		IncompleteDetails *struct {
+			Reason string `json:"reason"`
+		} `json:"incomplete_details"`
 		Output []struct {
 			Type      string `json:"type"`
 			Role      string `json:"role"`
@@ -567,10 +585,16 @@ func parseResponsesResponse(r io.Reader) (*model.ModelResponse, error) {
 			InputTokensDetails struct {
 				CachedTokens int `json:"cached_tokens"`
 			} `json:"input_tokens_details"`
+			OutputTokensDetails struct {
+				ReasoningTokens int `json:"reasoning_tokens"`
+			} `json:"output_tokens_details"`
 		} `json:"usage"`
 	}
 	if err := json.NewDecoder(r).Decode(&raw); err != nil {
 		return nil, err
+	}
+	if raw.Status == "failed" {
+		return nil, responsesFailureError(raw.Error)
 	}
 	out := &model.ModelResponse{
 		ResponseID: raw.ID,
@@ -581,28 +605,106 @@ func parseResponsesResponse(r io.Reader) (*model.ModelResponse, error) {
 			CachedInputTokens: raw.Usage.InputTokensDetails.CachedTokens,
 		},
 	}
+	if reasoningTokens := raw.Usage.OutputTokensDetails.ReasoningTokens; reasoningTokens > 0 {
+		out.Usage.Details = map[string]any{"reasoning_tokens": reasoningTokens}
+	}
+
+	var assistant *model.AssistantOutput
+	flush := func() {
+		if assistant == nil {
+			return
+		}
+		if len(assistant.Content) > 0 || len(assistant.ToolCalls) > 0 || assistant.ReasoningContent != "" {
+			out.Output = append(out.Output, *assistant)
+		}
+		assistant = nil
+	}
 	for _, item := range raw.Output {
 		switch item.Type {
-		case "function_call":
-			out.Output = append(out.Output, model.AssistantOutput{
-				Role: "assistant",
-				ToolCalls: []model.ToolCallOutput{{
-					CallID:       item.CallID,
-					Name:         item.Name,
-					RawArguments: item.Arguments,
-				}},
-			})
+		case "reasoning":
+			if assistant != nil && (len(assistant.Content) > 0 || len(assistant.ToolCalls) > 0 || assistant.ReasoningContent != "") {
+				flush()
+			}
+			if assistant == nil {
+				assistant = &model.AssistantOutput{Role: "assistant"}
+			}
+			for _, part := range item.Content {
+				assistant.ReasoningContent += part.Text
+			}
 		case "message":
-			parts := make([]model.TextPart, 0, len(item.Content))
+			if assistant != nil && len(assistant.Content) > 0 {
+				flush()
+			}
+			if assistant == nil {
+				assistant = &model.AssistantOutput{Role: "assistant"}
+			}
+			if item.Role != "" {
+				assistant.Role = item.Role
+			}
 			for _, part := range item.Content {
 				if part.Text != "" {
-					parts = append(parts, model.TextPart{Text: part.Text})
+					assistant.Content = append(assistant.Content, model.TextPart{Text: part.Text})
 				}
 			}
-			out.Output = append(out.Output, model.AssistantOutput{Role: item.Role, Content: parts})
+		case "function_call":
+			if assistant == nil {
+				assistant = &model.AssistantOutput{Role: "assistant"}
+			}
+			assistant.ToolCalls = append(assistant.ToolCalls, model.ToolCallOutput{
+				CallID:       item.CallID,
+				Name:         item.Name,
+				RawArguments: item.Arguments,
+			})
 		}
 	}
+	flush()
+
+	out.FinishReason = responsesFinishReason(raw.Status, raw.IncompleteDetails, out.Output)
 	return out, nil
+}
+
+// responsesFinishReason mirrors the chat transport's finish reasons so callers
+// see one vocabulary across transports.
+func responsesFinishReason(status string, incomplete *struct {
+	Reason string `json:"reason"`
+}, output []model.OutputItem) string {
+	if status == "incomplete" {
+		switch {
+		case incomplete == nil:
+			return "incomplete"
+		case incomplete.Reason == "max_output_tokens":
+			return "length"
+		case incomplete.Reason != "":
+			return incomplete.Reason
+		default:
+			return "incomplete"
+		}
+	}
+	for _, item := range output {
+		if assistant, ok := item.(model.AssistantOutput); ok && len(assistant.ToolCalls) > 0 {
+			return "tool_calls"
+		}
+	}
+	return "stop"
+}
+
+func responsesFailureError(failure *struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}) error {
+	if failure == nil {
+		return errors.New("responses request failed")
+	}
+	switch {
+	case failure.Code != "" && failure.Message != "":
+		return fmt.Errorf("responses request failed: %s: %s", failure.Code, failure.Message)
+	case failure.Message != "":
+		return fmt.Errorf("responses request failed: %s", failure.Message)
+	case failure.Code != "":
+		return fmt.Errorf("responses request failed: %s", failure.Code)
+	default:
+		return errors.New("responses request failed")
+	}
 }
 
 func openAIChatTools(tools []model.ToolDefinition) []map[string]any {
@@ -680,12 +782,17 @@ func openAIResponsesToolChoice(choice model.ToolChoice) any {
 //
 // Only explicit request flags are considered:
 //   - "enable_thinking": true               (Qwen / DashScope-style endpoints)
-//   - "thinking": {"type": "enabled"}      (native DeepSeek)
+//   - "thinking": {"type": "enabled"}      (native DeepSeek, chat transport)
+//   - "reasoning": {"effort": "<not none>"} (native DeepSeek, responses transport)
+//
+// The reasoning form is scoped to the responses transport: chat endpoints such
+// as OpenRouter accept a reasoning object next to a forced tool choice, so
+// dropping it there would silently change their requests.
 //
 // Models that enable thinking by default without one of these flags on the
 // wire cannot be detected here.
-func thinkingToolChoiceCompat(body map[string]any) {
-	if !thinkingExplicitlyEnabled(body) {
+func thinkingToolChoiceCompat(transport Transport, body map[string]any) {
+	if !thinkingExplicitlyEnabled(transport, body) {
 		return
 	}
 	choice, ok := body["tool_choice"]
@@ -704,12 +811,22 @@ func thinkingToolChoiceCompat(body map[string]any) {
 	delete(body, "tool_choice")
 }
 
-func thinkingExplicitlyEnabled(body map[string]any) bool {
+// thinkingExplicitlyEnabled reports whether the request body carries an
+// explicit switch that turns the provider's thinking mode on.
+func thinkingExplicitlyEnabled(transport Transport, body map[string]any) bool {
 	if enabled, ok := body["enable_thinking"].(bool); ok && enabled {
 		return true
 	}
 	if thinking, ok := body["thinking"].(map[string]any); ok {
 		if kind, ok := thinking["type"].(string); ok && kind == "enabled" {
+			return true
+		}
+	}
+	if transport != TransportResponses {
+		return false
+	}
+	if reasoning, ok := body["reasoning"].(map[string]any); ok {
+		if effort, ok := reasoning["effort"].(string); ok && effort != "" && effort != "none" {
 			return true
 		}
 	}

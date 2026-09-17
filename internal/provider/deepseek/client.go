@@ -30,6 +30,8 @@ type ChatClientConfig struct {
 	ParallelToolCalls *bool
 }
 
+type ResponsesClientConfig = ChatClientConfig
+
 func WithAPIKey(apiKey string) ProviderOption {
 	return func(p *Provider) { p.apiKey = apiKey }
 }
@@ -75,7 +77,18 @@ func NewProvider(opts ...ProviderOption) *Provider {
 }
 
 func (p *Provider) ChatClient(config ChatClientConfig) model.Client {
+	return p.model(config, compat.TransportChat)
+}
+
+func (p *Provider) ResponsesClient(config ResponsesClientConfig) model.Client {
+	return p.model(ChatClientConfig(config), compat.TransportResponses)
+}
+
+func (p *Provider) model(config ChatClientConfig, transport compat.Transport) model.Client {
 	extraBody := deepSeekExtraBody(config.Thinking, p.extraBody)
+	if transport == compat.TransportResponses {
+		extraBody = deepSeekResponsesExtraBody(config.Thinking, p.extraBody)
+	}
 	opts := []compat.Option{
 		compat.WithProviderName("deepseek"),
 		compat.WithDefaultModel(config.Model),
@@ -94,7 +107,28 @@ func (p *Provider) ChatClient(config ChatClientConfig) model.Client {
 	if config.ParallelToolCalls != nil {
 		opts = append(opts, compat.WithParallelToolCalls(*config.ParallelToolCalls))
 	}
+	if transport == compat.TransportResponses {
+		return compat.NewResponsesClient(p.apiKey, p.baseURL, opts...)
+	}
 	return compat.NewChatClient(p.apiKey, p.baseURL, opts...)
+}
+
+// deepSeekResponsesExtraBody maps the provider-neutral thinking switch onto the
+// responses transport, which configures reasoning through reasoning.effort
+// instead of the chat transport's thinking / reasoning_effort pair. A nil
+// switch keeps the chat transport's default of thinking enabled at high effort.
+func deepSeekResponsesExtraBody(thinking *bool, overrides map[string]any) map[string]any {
+	effort := "high"
+	if thinking != nil && !*thinking {
+		effort = "none"
+	}
+	extraBody := map[string]any{
+		"reasoning": map[string]any{"effort": effort},
+	}
+	for key, value := range overrides {
+		extraBody[key] = value
+	}
+	return extraBody
 }
 
 func deepSeekExtraBody(thinking *bool, overrides map[string]any) map[string]any {

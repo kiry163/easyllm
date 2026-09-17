@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -43,7 +44,7 @@ func (c *Client) generateChatStream(ctx context.Context, req model.ModelRequest,
 	if req.ToolChoice != nil {
 		body["tool_choice"] = openAIChatToolChoice(*req.ToolChoice)
 	}
-	thinkingToolChoiceCompat(body)
+	thinkingToolChoiceCompat(c.transport, body)
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("marshal chat request: %w", err)
@@ -69,7 +70,7 @@ func (c *Client) generateResponsesStream(ctx context.Context, req model.ModelReq
 	if req.ToolChoice != nil {
 		body["tool_choice"] = openAIResponsesToolChoice(*req.ToolChoice)
 	}
-	thinkingToolChoiceCompat(body)
+	thinkingToolChoiceCompat(c.transport, body)
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("marshal responses request: %w", err)
@@ -259,7 +260,8 @@ func (c *Client) parseResponsesStream(handler model.StreamHandler) func(context.
 	return func(ctx context.Context, r io.Reader) (*model.ModelResponse, bool, error) {
 		resp := &model.ModelResponse{}
 		var message strings.Builder
-		var completed bool
+		var reasoning strings.Builder
+		var terminalReceived bool
 
 		firstEventReceived, err := readSSE(ctx, r, c.streamFirstEventTimeout, func(data []byte) error {
 			var envelope struct {
@@ -280,9 +282,21 @@ func (c *Client) parseResponsesStream(handler model.StreamHandler) func(context.
 						}
 					}
 				}
-			case "response.completed":
-				completed = true
+			case "response.reasoning_text.delta":
+				if envelope.Delta != "" {
+					reasoning.WriteString(envelope.Delta)
+					if handler != nil {
+						if err := handler(model.StreamEvent{Type: model.StreamEventReasoningDelta, Text: envelope.Delta}); err != nil {
+							return err
+						}
+					}
+				}
+			case "response.completed", "response.incomplete", "response.failed":
+				terminalReceived = true
 				if len(envelope.Response) == 0 {
+					if envelope.Type == "response.failed" {
+						return errors.New("responses request failed")
+					}
 					return nil
 				}
 				parsed, err := parseResponsesResponse(bytes.NewReader(envelope.Response))
@@ -296,14 +310,15 @@ func (c *Client) parseResponsesStream(handler model.StreamHandler) func(context.
 		if err != nil {
 			return nil, firstEventReceived, err
 		}
-		if completed {
+		if terminalReceived {
 			return resp, firstEventReceived, nil
 		}
+		assistant := model.AssistantOutput{Role: "assistant", ReasoningContent: reasoning.String()}
 		if message.Len() > 0 {
-			resp.Output = append(resp.Output, model.AssistantOutput{
-				Role:    "assistant",
-				Content: []model.TextPart{{Text: message.String()}},
-			})
+			assistant.Content = append(assistant.Content, model.TextPart{Text: message.String()})
+		}
+		if len(assistant.Content) > 0 || assistant.ReasoningContent != "" {
+			resp.Output = append(resp.Output, assistant)
 		}
 		return resp, firstEventReceived, nil
 	}

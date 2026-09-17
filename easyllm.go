@@ -477,10 +477,6 @@ func newQwenRerankClient(config Config, doer HTTPDoer) RerankClient {
 }
 
 func newDeepSeekClient(config Config, doer HTTPDoer) (Client, error) {
-	if transportOrDefault(config.Transport) == TransportResponses {
-		return nil, fmt.Errorf("provider %q does not support transport %q", config.Provider, TransportResponses)
-	}
-
 	opts := []deepseek.ProviderOption{
 		deepseek.WithAPIKey(config.APIKey),
 		deepseek.WithExtraBody(configExtraBody(config)),
@@ -507,6 +503,9 @@ func newDeepSeekClient(config Config, doer HTTPDoer) (Client, error) {
 		TopP:              config.TopP,
 		MaxTokens:         config.MaxTokens,
 		ParallelToolCalls: config.ParallelToolCalls,
+	}
+	if transportOrDefault(config.Transport) == TransportResponses {
+		return p.ResponsesClient(deepseek.ResponsesClientConfig(clientConfig)), nil
 	}
 	return p.ChatClient(clientConfig), nil
 }

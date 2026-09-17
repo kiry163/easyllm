@@ -1286,6 +1286,114 @@ func TestNewClientBuildsDeepSeekClient(t *testing.T) {
 	}
 }
 
+func TestRunStreamDeepSeekResponsesCarriesReasoningAcrossToolCall(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/responses" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		requests++
+		defer r.Body.Close()
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		reasoning, ok := body["reasoning"].(map[string]any)
+		if !ok || reasoning["effort"] != "high" {
+			t.Fatalf("request %d missing reasoning effort: %#v", requests, body["reasoning"])
+		}
+		if _, ok := body["thinking"]; ok {
+			t.Fatalf("request %d leaked the chat-only thinking field: %#v", requests, body)
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		if requests == 1 {
+			_, _ = w.Write([]byte(strings.Join([]string{
+				`data: {"type":"response.created"}`,
+				``,
+				`data: {"type":"response.reasoning_text.delta","delta":"step-1"}`,
+				``,
+				`data: {"type":"response.reasoning_text.delta","delta":"step-2"}`,
+				``,
+				`data: {"type":"response.function_call_arguments.delta","delta":"{\"value\":\"ok\"}"}`,
+				``,
+				`data: {"type":"response.completed","response":{"id":"resp_1","status":"completed","output":[{"type":"reasoning","content":[{"type":"reasoning_text","text":"step-1step-2"}]},{"type":"function_call","call_id":"call_1","name":"submit","arguments":"{\"value\":\"ok\"}"}],"usage":{"input_tokens":3,"output_tokens":2,"total_tokens":5}}}`,
+				``,
+			}, "\n")))
+			return
+		}
+
+		input, ok := body["input"].([]any)
+		if !ok || len(input) != 5 {
+			t.Fatalf("request %d unexpected input payload: %#v", requests, body["input"])
+		}
+		replayed, ok := input[1].(map[string]any)
+		if !ok || replayed["type"] != "reasoning" {
+			t.Fatalf("request %d missing replayed reasoning item: %#v", requests, input[1])
+		}
+		parts, ok := replayed["content"].([]any)
+		if !ok || len(parts) != 1 {
+			t.Fatalf("request %d unexpected reasoning content: %#v", requests, replayed["content"])
+		}
+		part, ok := parts[0].(map[string]any)
+		if !ok || part["type"] != "reasoning_text" || part["text"] != "step-1step-2" {
+			t.Fatalf("request %d unexpected reasoning text: %#v", requests, parts[0])
+		}
+		call, ok := input[3].(map[string]any)
+		if !ok || call["type"] != "function_call" || call["call_id"] != "call_1" {
+			t.Fatalf("request %d missing function call: %#v", requests, input[3])
+		}
+		result, ok := input[4].(map[string]any)
+		if !ok || result["type"] != "function_call_output" || result["call_id"] != "call_1" {
+			t.Fatalf("request %d missing function call output: %#v", requests, input[4])
+		}
+
+		_, _ = w.Write([]byte(strings.Join([]string{
+			`data: {"type":"response.output_text.delta","delta":"done"}`,
+			``,
+			`data: {"type":"response.completed","response":{"id":"resp_2","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}],"usage":{"input_tokens":4,"output_tokens":1,"total_tokens":5}}}`,
+			``,
+		}, "\n")))
+	}))
+	defer server.Close()
+
+	client, err := NewClient(Config{
+		Provider:  ProviderDeepSeek,
+		APIKey:    "token",
+		BaseURL:   server.URL,
+		Model:     "deepseek-flash",
+		Transport: TransportResponses,
+	})
+	if err != nil {
+		t.Fatalf("NewClient returned error: %v", err)
+	}
+	submitTool, err := NewTool[submitArgs](submitTool{})
+	if err != nil {
+		t.Fatalf("NewTool returned error: %v", err)
+	}
+	engine := NewEngine(client, WithTools(submitTool))
+
+	var streamedReasoning strings.Builder
+	result, err := engine.RunStream(context.Background(), RunRequest{Input: "submit ok"}, func(event StreamEvent) error {
+		if event.Type == StreamEventReasoningDelta {
+			streamedReasoning.WriteString(event.Text)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("RunStream returned error: %v", err)
+	}
+	if requests != 2 {
+		t.Fatalf("expected two model requests, got %d", requests)
+	}
+	if result.OutputText != "done" {
+		t.Fatalf("unexpected output: %q", result.OutputText)
+	}
+	if streamedReasoning.String() != "step-1step-2" {
+		t.Fatalf("unexpected streamed reasoning: %q", streamedReasoning.String())
+	}
+}
+
 func TestNewClientBuildsResponsesClientWhenRequested(t *testing.T) {
 	client, err := NewClient(Config{
 		Provider:  ProviderOpenAI,

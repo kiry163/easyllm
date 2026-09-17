@@ -139,7 +139,7 @@ if err != nil {
 
 `EnableThinking` is currently a provider-level compatibility flag. Built-in providers map it only when they support a provider-specific thinking switch. Today that mainly applies to Qwen and DeepSeek.
 
-Thinking mode and forced tool selection are incompatible on several OpenAI-compatible providers: DashScope/Qwen and DeepSeek reject `tool_choice: "required"` (and the object form that forces a specific tool) with an HTTP 400 while thinking is enabled. When an assembled request explicitly enables thinking and also forces a tool, `easyllm` automatically drops the forced choice so the provider default (automatic selection) applies; thinking stays enabled and the model is normally still able to call the tool. The adaptation keys off explicit request flags only: `enable_thinking: true` (Qwen / DashScope-style endpoints) and `thinking: {"type":"enabled"}` (DeepSeek). It applies on the chat, responses, and streaming transports alike. Models that enable thinking by default without one of these flags on the wire are not detected; force a specific tool there by disabling thinking explicitly.
+Thinking mode and forced tool selection are incompatible on several OpenAI-compatible providers: DashScope/Qwen and DeepSeek reject `tool_choice: "required"` (and the object form that forces a specific tool) with an HTTP 400 while thinking is enabled. When an assembled request explicitly enables thinking and also forces a tool, `easyllm` automatically drops the forced choice so the provider default (automatic selection) applies; thinking stays enabled and the model is normally still able to call the tool. The adaptation keys off explicit request flags only: `enable_thinking: true` (Qwen / DashScope-style endpoints), `thinking: {"type":"enabled"}` (DeepSeek chat) and `reasoning: {"effort":"<not none>"}` (DeepSeek responses). It applies on the chat, responses, and streaming transports alike. Models that enable thinking by default without one of these flags on the wire are not detected; force a specific tool there by disabling thinking explicitly.
 
 Provider-specific request body fields can be passed through `ExtraBody`. Values in `ExtraBody` are merged after normalized config fields, so they can override the final request body.
 
@@ -155,7 +155,7 @@ client, err := easyllm.NewClient(easyllm.Config{
 })
 ```
 
-DeepSeek keeps its reasoning controls provider-local instead of adding more top-level `Config` fields:
+DeepSeek keeps its reasoning controls provider-local instead of adding more top-level `Config` fields. The chat transport configures thinking through `thinking` / `reasoning_effort`:
 
 - Default request body includes `thinking: {"type":"enabled"}`.
 - Default request body includes `reasoning_effort: "high"` while thinking is enabled.
@@ -179,9 +179,33 @@ client, err := easyllm.NewClient(easyllm.Config{
 })
 ```
 
-When DeepSeek returns tool calls in thinking mode, `easyllm` preserves the provider-required continuation state across the tool loop automatically: the follow-up request replays `reasoning_content` on the assistant message without any caller-side work.
+DeepSeek also serves the responses transport. It is stateless (`store: false`, no `previous_response_id`), takes the full conversation in `input`, and configures thinking through `reasoning.effort` instead of the chat fields:
 
-Reasoning text is a typed field rather than opaque provider state. `AssistantOutput.ReasoningContent` holds the chain a response produced, and an `AssistantMessageItem` passed back through `ModelRequest.Input` writes its `ReasoningContent` to the wire as `reasoning_content`:
+```go
+client, err := easyllm.NewClient(easyllm.Config{
+	Provider:  easyllm.ProviderDeepSeek,
+	APIKey:    os.Getenv("DEEPSEEK_API_KEY"),
+	Model:     "deepseek-flash",
+	Transport: easyllm.TransportResponses,
+	ExtraBody: map[string]any{
+		"reasoning": map[string]any{"effort": "low"},
+	},
+})
+```
+
+`EnableThinking` maps onto that field as follows:
+
+| `EnableThinking` | chat transport | responses transport |
+| --- | --- | --- |
+| `nil` | `thinking:{"type":"enabled"}` + `reasoning_effort:"high"` | `reasoning:{"effort":"high"}` |
+| `true` | same as `nil` | same as `nil` |
+| `false` | `thinking:{"type":"disabled"}` | `reasoning:{"effort":"none"}` |
+
+Forced tool selection is rejected while thinking is on, on both transports: the chat transport is detected through `thinking` / `enable_thinking`, the responses transport through a `reasoning.effort` other than `none`. The responses rule is scoped to that transport, so a chat request that carries its own `reasoning` object (OpenRouter, for example) keeps its forced `tool_choice`.
+
+When DeepSeek returns tool calls in thinking mode, `easyllm` preserves the provider-required continuation state across the tool loop automatically: the follow-up request replays the chain on the assistant message — `reasoning_content` on the chat transport, a `reasoning` item on the responses transport — without any caller-side work.
+
+Reasoning text is a typed field rather than opaque provider state. `AssistantOutput.ReasoningContent` holds the chain a response produced, and an `AssistantMessageItem` passed back through `ModelRequest.Input` writes its `ReasoningContent` back to the provider:
 
 ```go
 resp, err := client.Generate(ctx, req)
@@ -189,7 +213,9 @@ assistant := resp.Output[0].(easyllm.AssistantOutput)
 fmt.Println(assistant.ReasoningContent)
 ```
 
-Streaming reports the chain while it is produced through `StreamEventReasoningDelta` events; concatenating their `Text` yields the same string as the final `AssistantOutput.ReasoningContent`. Providers that emit no reasoning leave both the field and the event stream empty.
+Streaming reports the chain while it is produced through `StreamEventReasoningDelta` events; concatenating their `Text` yields the same string as the final `AssistantOutput.ReasoningContent`. Providers that emit no reasoning — including DeepSeek with `reasoning.effort` set to `none` — leave both the field and the event stream empty.
+
+Responses calls also surface `FinishReason`: `stop`, `tool_calls`, `length` for a response truncated by `max_output_tokens`, or the provider's `content_filter` reason. A response that ends in `failed` is returned as an error, and `usage.output_tokens_details.reasoning_tokens` is reported as `Usage.Details["reasoning_tokens"]`.
 
 ## HTTP Middleware
 
@@ -492,7 +518,7 @@ if err != nil {
 fmt.Println(result.StopReason)
 ```
 
-Streaming is available on the built-in OpenAI, OpenAI-compatible, Qwen, and DeepSeek clients. `TransportResponses` streaming is available on providers that expose the responses transport; DeepSeek remains chat-only.
+Streaming is available on the built-in OpenAI, OpenAI-compatible, Qwen, and DeepSeek clients. `TransportResponses` streaming is available on every provider that exposes the responses transport, DeepSeek included.
 
 ## Embeddings
 

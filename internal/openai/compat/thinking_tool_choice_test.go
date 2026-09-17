@@ -180,21 +180,74 @@ func TestThinkingModeDowngradesForcedToolChoice(t *testing.T) {
 
 func TestThinkingExplicitlyEnabledDetection(t *testing.T) {
 	tests := []struct {
-		name string
-		body map[string]any
-		want bool
+		name      string
+		transport Transport
+		body      map[string]any
+		want      bool
 	}{
-		{name: "qwen thinking on", body: map[string]any{"enable_thinking": true}, want: true},
-		{name: "qwen thinking off", body: map[string]any{"enable_thinking": false}},
-		{name: "deepseek thinking on", body: map[string]any{"thinking": map[string]any{"type": "enabled"}}, want: true},
-		{name: "deepseek thinking off", body: map[string]any{"thinking": map[string]any{"type": "disabled"}}},
-		{name: "no thinking flags", body: map[string]any{"model": "x"}},
-		{name: "non-bool enable_thinking", body: map[string]any{"enable_thinking": "true"}},
+		{name: "qwen thinking on", transport: TransportChat, body: map[string]any{"enable_thinking": true}, want: true},
+		{name: "qwen thinking off", transport: TransportChat, body: map[string]any{"enable_thinking": false}},
+		{name: "deepseek thinking on", transport: TransportChat, body: map[string]any{"thinking": map[string]any{"type": "enabled"}}, want: true},
+		{name: "deepseek thinking off", transport: TransportChat, body: map[string]any{"thinking": map[string]any{"type": "disabled"}}},
+		{name: "no thinking flags", transport: TransportChat, body: map[string]any{"model": "x"}},
+		{name: "non-bool enable_thinking", transport: TransportChat, body: map[string]any{"enable_thinking": "true"}},
+		{name: "responses reasoning high", transport: TransportResponses, body: map[string]any{"reasoning": map[string]any{"effort": "high"}}, want: true},
+		{name: "responses reasoning max", transport: TransportResponses, body: map[string]any{"reasoning": map[string]any{"effort": "max"}}, want: true},
+		{name: "responses reasoning none", transport: TransportResponses, body: map[string]any{"reasoning": map[string]any{"effort": "none"}}},
+		{name: "responses reasoning empty effort", transport: TransportResponses, body: map[string]any{"reasoning": map[string]any{"effort": ""}}},
+		{name: "responses without reasoning", transport: TransportResponses, body: map[string]any{"model": "x"}},
+		{name: "chat reasoning stays unrecognized", transport: TransportChat, body: map[string]any{"reasoning": map[string]any{"effort": "high"}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := thinkingExplicitlyEnabled(tt.body); got != tt.want {
-				t.Fatalf("thinkingExplicitlyEnabled(%#v) = %v, want %v", tt.body, got, tt.want)
+			if got := thinkingExplicitlyEnabled(tt.transport, tt.body); got != tt.want {
+				t.Fatalf("thinkingExplicitlyEnabled(%v, %#v) = %v, want %v", tt.transport, tt.body, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestForcedToolChoiceDowngradeIsTransportScoped pins the boundary of the
+// thinking-mode tool choice shim: a reasoning.effort object means thinking on
+// for the responses transport only, because chat endpoints such as OpenRouter
+// accept reasoning next to a forced tool choice.
+func TestForcedToolChoiceDowngradeIsTransportScoped(t *testing.T) {
+	required := model.NewToolChoice(model.ToolChoiceModeRequired, "")
+	for _, tt := range []struct {
+		name       string
+		transport  Transport
+		wantAbsent bool
+	}{
+		{name: "responses drops the forced choice", transport: TransportResponses, wantAbsent: true},
+		{name: "chat preserves the forced choice", transport: TransportChat},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var body map[string]any
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Fatalf("decode request body: %v", err)
+				}
+				writeCompatFakeResponse(w, tt.transport, false)
+			}))
+			defer server.Close()
+
+			opts := []Option{WithExtraBody(map[string]any{"reasoning": map[string]any{"effort": "high"}})}
+			var client *Client
+			if tt.transport == TransportResponses {
+				client = NewResponsesClient("token", server.URL, opts...)
+			} else {
+				client = NewChatClient("token", server.URL, opts...)
+			}
+			req := model.ModelRequest{
+				Tools:      []model.ToolDefinition{{Name: "get_weather", Parameters: map[string]any{"type": "object"}}},
+				ToolChoice: &required,
+			}
+			if _, err := client.Generate(context.Background(), req); err != nil {
+				t.Fatalf("Generate returned error: %v", err)
+			}
+			got, ok := body["tool_choice"]
+			if ok == tt.wantAbsent {
+				t.Fatalf("tool_choice presence = %v, want absent = %v (got %#v)", ok, tt.wantAbsent, got)
 			}
 		})
 	}

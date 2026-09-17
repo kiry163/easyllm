@@ -269,3 +269,53 @@ func TestClientGenerateStreamUsesCompatStreaming(t *testing.T) {
 		t.Fatalf("unexpected done response: %+v", done)
 	}
 }
+
+func TestResponsesClientSendsReasoningEffortOnly(t *testing.T) {
+	enabled := true
+	disabled := false
+	tests := []struct {
+		name       string
+		thinking   *bool
+		extraBody  map[string]any
+		wantEffort string
+	}{
+		{name: "default keeps thinking on at high effort", wantEffort: "high"},
+		{name: "enabled keeps high effort", thinking: &enabled, wantEffort: "high"},
+		{name: "disabled turns thinking off", thinking: &disabled, wantEffort: "none"},
+		{name: "extra body overrides the effort", extraBody: map[string]any{"reasoning": map[string]any{"effort": "low"}}, wantEffort: "low"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var body map[string]any
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/responses" {
+					t.Fatalf("unexpected path: %s", r.URL.Path)
+				}
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Fatalf("decode body: %v", err)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"id": "resp_1", "status": "completed", "output": []any{}})
+			}))
+			defer server.Close()
+
+			opts := []ProviderOption{WithAPIKey("token"), WithBaseURL(server.URL)}
+			if tt.extraBody != nil {
+				opts = append(opts, WithExtraBody(tt.extraBody))
+			}
+			client := NewProvider(opts...).ResponsesClient(ResponsesClientConfig{Model: "deepseek-flash", Thinking: tt.thinking})
+			if _, err := client.Generate(context.Background(), model.ModelRequest{}); err != nil {
+				t.Fatalf("Generate returned error: %v", err)
+			}
+			reasoning, ok := body["reasoning"].(map[string]any)
+			if !ok || reasoning["effort"] != tt.wantEffort {
+				t.Fatalf("unexpected reasoning payload: %#v", body["reasoning"])
+			}
+			if _, ok := body["thinking"]; ok {
+				t.Fatalf("chat-only thinking field leaked into a responses request: %#v", body)
+			}
+			if _, ok := body["reasoning_effort"]; ok {
+				t.Fatalf("chat-only reasoning_effort field leaked into a responses request: %#v", body)
+			}
+		})
+	}
+}
