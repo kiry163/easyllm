@@ -348,7 +348,9 @@ func openAIChatMessages(items []model.InputItem) []map[string]any {
 			if len(current.ToolCalls) > 0 {
 				msg["tool_calls"] = openAIChatToolCallItems(current.ToolCalls)
 			}
-			applyProviderStateToChatMessage(msg, current.ProviderState)
+			if current.ReasoningContent != "" {
+				msg["reasoning_content"] = current.ReasoningContent
+			}
 			out = append(out, msg)
 		case model.ToolResultItem:
 			out = append(out, map[string]any{
@@ -526,21 +528,20 @@ func parseChatResponse(r io.Reader) (*model.ModelResponse, error) {
 	}
 	out.FinishReason = raw.Choices[0].FinishReason
 	assistant := model.AssistantOutput{
-		Role:          "assistant",
-		ProviderState: chatProviderState(raw.Choices[0].Message.ReasoningContent),
+		Role:             "assistant",
+		ReasoningContent: raw.Choices[0].Message.ReasoningContent,
 	}
 	if raw.Choices[0].Message.Content != "" {
 		assistant.Content = append(assistant.Content, model.TextPart{Text: raw.Choices[0].Message.Content})
 	}
 	for _, call := range raw.Choices[0].Message.ToolCalls {
 		assistant.ToolCalls = append(assistant.ToolCalls, model.ToolCallOutput{
-			CallID:        call.ID,
-			Name:          call.Function.Name,
-			RawArguments:  call.Function.Arguments,
-			ProviderState: chatProviderState(raw.Choices[0].Message.ReasoningContent),
+			CallID:       call.ID,
+			Name:         call.Function.Name,
+			RawArguments: call.Function.Arguments,
 		})
 	}
-	if len(assistant.Content) > 0 || len(assistant.ToolCalls) > 0 {
+	if len(assistant.Content) > 0 || len(assistant.ToolCalls) > 0 || assistant.ReasoningContent != "" {
 		out.Output = append(out.Output, assistant)
 	}
 	return out, nil
@@ -748,20 +749,4 @@ func cloneMap(src map[string]any) map[string]any {
 		out[key] = value
 	}
 	return out
-}
-
-func chatProviderState(reasoningContent string) map[string]any {
-	if reasoningContent == "" {
-		return nil
-	}
-	return map[string]any{"reasoning_content": reasoningContent}
-}
-
-func applyProviderStateToChatMessage(msg map[string]any, state map[string]any) {
-	if len(state) == 0 {
-		return
-	}
-	if reasoningContent, ok := state["reasoning_content"].(string); ok && reasoningContent != "" {
-		msg["reasoning_content"] = reasoningContent
-	}
 }

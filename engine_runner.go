@@ -448,7 +448,7 @@ func runStream(ctx context.Context, client Client, session *Session, metadata ma
 				}
 				resp = captured
 				return nil
-			case StreamEventMessageDelta:
+			case StreamEventMessageDelta, StreamEventReasoningDelta:
 				if handler != nil {
 					if err := handler(event); err != nil {
 						return newEngineError(EngineErrorHandler, "stream_handler", err)
@@ -607,16 +607,15 @@ func outputItemsToInputItems(items []model.OutputItem) []model.InputItem {
 			toolCalls := make([]model.ToolCallItem, 0, len(current.ToolCalls))
 			for _, call := range current.ToolCalls {
 				toolCalls = append(toolCalls, model.ToolCallItem{
-					CallID:        call.CallID,
-					Name:          call.Name,
-					RawArguments:  call.RawArguments,
-					ProviderState: cloneMap(call.ProviderState),
+					CallID:       call.CallID,
+					Name:         call.Name,
+					RawArguments: call.RawArguments,
 				})
 			}
 			out = append(out, model.AssistantMessageItem{
-				Content:       current.Content,
-				ToolCalls:     toolCalls,
-				ProviderState: cloneMap(current.ProviderState),
+				Content:          current.Content,
+				ToolCalls:        toolCalls,
+				ReasoningContent: current.ReasoningContent,
 			})
 		}
 	}

@@ -88,10 +88,11 @@ const (
 	ToolChoiceModeNone     = model.ToolChoiceModeNone
 	ToolChoiceModeNamed    = model.ToolChoiceModeNamed
 
-	StreamEventMessageDelta = model.StreamEventMessageDelta
-	StreamEventToolStart    = model.StreamEventToolStart
-	StreamEventToolFinish   = model.StreamEventToolFinish
-	StreamEventDone         = model.StreamEventDone
+	StreamEventMessageDelta   = model.StreamEventMessageDelta
+	StreamEventReasoningDelta = model.StreamEventReasoningDelta
+	StreamEventToolStart      = model.StreamEventToolStart
+	StreamEventToolFinish     = model.StreamEventToolFinish
+	StreamEventDone           = model.StreamEventDone
 )
 
 type Config struct {

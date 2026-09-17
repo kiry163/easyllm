@@ -1251,7 +1251,13 @@ func TestRunStreamDeepSeekThinkingCarriesReasoningContentAcrossToolCall(t *testi
 	}
 	engine := NewEngine(client, WithTools(submitTool))
 
-	result, err := engine.RunStream(context.Background(), RunRequest{Input: "submit ok"}, nil)
+	var streamedReasoning strings.Builder
+	result, err := engine.RunStream(context.Background(), RunRequest{Input: "submit ok"}, func(event StreamEvent) error {
+		if event.Type == StreamEventReasoningDelta {
+			streamedReasoning.WriteString(event.Text)
+		}
+		return nil
+	})
 	if err != nil {
 		t.Fatalf("RunStream returned error: %v", err)
 	}
@@ -1260,6 +1266,9 @@ func TestRunStreamDeepSeekThinkingCarriesReasoningContentAcrossToolCall(t *testi
 	}
 	if result.OutputText != "done" {
 		t.Fatalf("unexpected output: %q", result.OutputText)
+	}
+	if streamedReasoning.String() != "step-1step-2" {
+		t.Fatalf("unexpected streamed reasoning: %q", streamedReasoning.String())
 	}
 }
 

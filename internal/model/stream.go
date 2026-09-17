@@ -3,10 +3,11 @@ package model
 type StreamEventType string
 
 const (
-	StreamEventMessageDelta StreamEventType = "message_delta"
-	StreamEventToolStart    StreamEventType = "tool_start"
-	StreamEventToolFinish   StreamEventType = "tool_finish"
-	StreamEventDone         StreamEventType = "done"
+	StreamEventMessageDelta   StreamEventType = "message_delta"
+	StreamEventReasoningDelta StreamEventType = "reasoning_delta"
+	StreamEventToolStart      StreamEventType = "tool_start"
+	StreamEventToolFinish     StreamEventType = "tool_finish"
+	StreamEventDone           StreamEventType = "done"
 )
 
 type StreamEvent struct {

@@ -179,7 +179,17 @@ client, err := easyllm.NewClient(easyllm.Config{
 })
 ```
 
-When DeepSeek returns tool calls in thinking mode, `easyllm` preserves the provider-required continuation state across the tool loop automatically. That replay stays internal to the provider adapter rather than becoming part of the public API.
+When DeepSeek returns tool calls in thinking mode, `easyllm` preserves the provider-required continuation state across the tool loop automatically: the follow-up request replays `reasoning_content` on the assistant message without any caller-side work.
+
+Reasoning text is a typed field rather than opaque provider state. `AssistantOutput.ReasoningContent` holds the chain a response produced, and an `AssistantMessageItem` passed back through `ModelRequest.Input` writes its `ReasoningContent` to the wire as `reasoning_content`:
+
+```go
+resp, err := client.Generate(ctx, req)
+assistant := resp.Output[0].(easyllm.AssistantOutput)
+fmt.Println(assistant.ReasoningContent)
+```
+
+Streaming reports the chain while it is produced through `StreamEventReasoningDelta` events; concatenating their `Text` yields the same string as the final `AssistantOutput.ReasoningContent`. Providers that emit no reasoning leave both the field and the event stream empty.
 
 ## HTTP Middleware
 
@@ -462,6 +472,8 @@ result, err := engine.RunStream(ctx, easyllm.RunRequest{
 	Input: "Check the weather in Hangzhou.",
 }, func(event easyllm.StreamEvent) error {
 	switch event.Type {
+	case easyllm.StreamEventReasoningDelta:
+		fmt.Print(event.Text) // chain of thought, when the provider emits one
 	case easyllm.StreamEventMessageDelta:
 		fmt.Print(event.Text)
 	case easyllm.StreamEventToolStart:

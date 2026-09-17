@@ -69,22 +69,21 @@ type UserMessageItem struct {
 func (UserMessageItem) inputItem() {}
 
 type AssistantMessageItem struct {
-	ID            string         `json:"id"`
-	Metadata      map[string]any `json:"metadata"`
-	Content       []TextPart     `json:"content"`
-	ToolCalls     []ToolCallItem `json:"tool_calls"`
-	ProviderState map[string]any `json:"provider_state"`
+	ID               string         `json:"id"`
+	Metadata         map[string]any `json:"metadata"`
+	Content          []TextPart     `json:"content"`
+	ToolCalls        []ToolCallItem `json:"tool_calls"`
+	ReasoningContent string         `json:"reasoning_content,omitempty"`
 }
 
 func (AssistantMessageItem) inputItem() {}
 
 type ToolCallItem struct {
-	ID            string         `json:"id"`
-	CallID        string         `json:"call_id"`
-	Name          string         `json:"name"`
-	RawArguments  string         `json:"raw_arguments"`
-	ProviderState map[string]any `json:"provider_state"`
-	Metadata      map[string]any `json:"metadata"`
+	ID           string         `json:"id"`
+	CallID       string         `json:"call_id"`
+	Name         string         `json:"name"`
+	RawArguments string         `json:"raw_arguments"`
+	Metadata     map[string]any `json:"metadata"`
 }
 
 type ToolResultItem struct {
@@ -98,19 +97,18 @@ type ToolResultItem struct {
 func (ToolResultItem) inputItem() {}
 
 type AssistantOutput struct {
-	Role          string           `json:"role"`
-	Content       []TextPart       `json:"content"`
-	ToolCalls     []ToolCallOutput `json:"tool_calls"`
-	ProviderState map[string]any   `json:"provider_state"`
+	Role             string           `json:"role"`
+	Content          []TextPart       `json:"content"`
+	ToolCalls        []ToolCallOutput `json:"tool_calls"`
+	ReasoningContent string           `json:"reasoning_content,omitempty"`
 }
 
 func (AssistantOutput) outputItem() {}
 
 type ToolCallOutput struct {
-	CallID        string         `json:"call_id"`
-	Name          string         `json:"name"`
-	RawArguments  string         `json:"raw_arguments"`
-	ProviderState map[string]any `json:"provider_state"`
+	CallID       string `json:"call_id"`
+	Name         string `json:"name"`
+	RawArguments string `json:"raw_arguments"`
 }
 
 type ToolDefinition struct {

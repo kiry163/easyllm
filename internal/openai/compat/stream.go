@@ -198,6 +198,11 @@ func (c *Client) parseChatStream(handler model.StreamHandler) func(context.Conte
 				}
 				if delta := choice.Delta.ReasoningContent; delta != "" {
 					reasoning.WriteString(delta)
+					if handler != nil {
+						if err := handler(model.StreamEvent{Type: model.StreamEventReasoningDelta, Text: delta}); err != nil {
+							return err
+						}
+					}
 				}
 				for _, rawCall := range choice.Delta.ToolCalls {
 					current := toolCalls[rawCall.Index]
@@ -223,8 +228,8 @@ func (c *Client) parseChatStream(handler model.StreamHandler) func(context.Conte
 		}
 
 		assistant := model.AssistantOutput{
-			Role:          "assistant",
-			ProviderState: chatProviderState(reasoning.String()),
+			Role:             "assistant",
+			ReasoningContent: reasoning.String(),
 		}
 		if message.Len() > 0 {
 			assistant.Content = append(assistant.Content, model.TextPart{Text: message.String()})
@@ -237,14 +242,13 @@ func (c *Client) parseChatStream(handler model.StreamHandler) func(context.Conte
 				}
 				rawArgs := current.Arguments.String()
 				assistant.ToolCalls = append(assistant.ToolCalls, model.ToolCallOutput{
-					CallID:        current.CallID,
-					Name:          current.Name,
-					RawArguments:  rawArgs,
-					ProviderState: chatProviderState(reasoning.String()),
+					CallID:       current.CallID,
+					Name:         current.Name,
+					RawArguments: rawArgs,
 				})
 			}
 		}
-		if len(assistant.Content) > 0 || len(assistant.ToolCalls) > 0 {
+		if len(assistant.Content) > 0 || len(assistant.ToolCalls) > 0 || assistant.ReasoningContent != "" {
 			resp.Output = append(resp.Output, assistant)
 		}
 		return resp, firstEventReceived, nil
