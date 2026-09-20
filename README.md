@@ -278,9 +278,7 @@ if err != nil {
 
 engine := easyllm.NewEngine(
 	client,
-	easyllm.WithCurrentTime(easyllm.CurrentTimeConfig{
-		Location: location,
-	}),
+	easyllm.WithCurrentTime(location),
 )
 ```
 
@@ -292,7 +290,9 @@ again, including when it reuses the same session.
 
 The injected message is included in `OnModelRequest`, but it is not stored in
 `Session.Items` or session snapshots. Current-time injection is disabled unless
-`WithCurrentTime(...)` is supplied. A nil configured location uses UTC.
+`WithCurrentTime(...)` is supplied. A nil location means the host's local time
+zone (`time.Local`, which follows `TZ`); the zone name in the injected message is
+then `Local`.
 
 For applications serving users in different time zones, override the engine
 location for an individual run:
@@ -348,8 +348,8 @@ TotalCost       = InputCost + OutputCost + CachedInputCost
 #### Peak and Off-Peak Rates
 
 `NewPricing(...)` adds recurring time windows that override the base rates. The
-first matching window wins. Windows are evaluated in `Asia/Shanghai` unless
-`Location` says otherwise.
+first matching window wins. Windows are evaluated in the host's local time zone
+unless `Location` says otherwise.
 
 ```go
 pricing, err := easyllm.NewPricing(easyllm.PricingConfig{
@@ -385,6 +385,12 @@ easyllm.RateWindow{
 `NewPricing(...)` rejects malformed windows, negative rates, and out-of-range
 weekdays, so a bad price list fails at startup rather than mid-run.
 
+The location is read once, while the price list is compiled. Leaving the windows
+on the local zone ties cost to the deployment host: a container with `TZ` unset,
+or set to an empty value, runs in UTC and its off-peak window moves with it. Pin
+`Location` (or `TZ`) when the same price list must produce the same cost
+everywhere.
+
 #### Loading Pricing From JSON
 
 ```json
@@ -407,8 +413,8 @@ pricing, err := easyllm.NewPricingJSON(text)
 ```
 
 `weekdays` uses `time.Weekday` numbers, `0` for Sunday through `6` for Saturday.
-An omitted `location` uses `Asia/Shanghai`. Unknown fields are rejected, so a
-misspelled key cannot silently fall back to base rates.
+An omitted `location` uses the host's local time zone. Unknown fields are
+rejected, so a misspelled key cannot silently fall back to base rates.
 
 #### Custom Pricing
 

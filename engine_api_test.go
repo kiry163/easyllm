@@ -210,7 +210,7 @@ func TestRunInjectsCurrentTimeWithoutPersistingIt(t *testing.T) {
 	runtime := NewEngine(
 		client,
 		WithInstructions("be helpful"),
-		WithCurrentTime(CurrentTimeConfig{Location: location}),
+		WithCurrentTime(location),
 		WithHooks(Hooks{
 			OnModelRequest: func(event ModelRequestEvent) error {
 				hookRequest = event.Request
@@ -253,6 +253,33 @@ func TestRunInjectsCurrentTimeWithoutPersistingIt(t *testing.T) {
 	}
 }
 
+func TestRunInjectsLocalTimeWhenNoLocationConfigured(t *testing.T) {
+	client := &captureClient{}
+	fixed := time.Date(2026, time.July, 20, 7, 30, 45, 0, time.UTC)
+	runtime := NewEngine(client, WithCurrentTime(nil))
+	runtime.currentTime.now = func() time.Time { return fixed }
+
+	if runtime.currentTime.location != time.Local {
+		t.Fatalf("unexpected default location: %v, want the host local zone", runtime.currentTime.location)
+	}
+
+	if _, err := runtime.Run(context.Background(), RunRequest{Input: "hello"}); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if len(client.requests) != 1 {
+		t.Fatalf("unexpected request count: %d", len(client.requests))
+	}
+	current, ok := client.requests[0].Input[0].(model.SystemMessageItem)
+	if !ok {
+		t.Fatalf("unexpected current time item: %T", client.requests[0].Input[0])
+	}
+	want := fmt.Sprintf("Current date and time: %s (%s).",
+		fixed.In(time.Local).Format(time.RFC3339), time.Local.String())
+	if got := firstText(current.Content); got != want {
+		t.Fatalf("unexpected current time: %q", got)
+	}
+}
+
 func TestRunUsesOneCurrentTimeAcrossToolLoop(t *testing.T) {
 	runTool, err := NewTool[submitArgs](submitTool{})
 	if err != nil {
@@ -263,7 +290,7 @@ func TestRunUsesOneCurrentTimeAcrossToolLoop(t *testing.T) {
 	runtime := NewEngine(
 		client,
 		WithTools(runTool),
-		WithCurrentTime(CurrentTimeConfig{}),
+		WithCurrentTime(nil),
 	)
 	runtime.currentTime.now = func() time.Time {
 		nowCalls++
@@ -289,7 +316,7 @@ func TestRunUsesOneCurrentTimeAcrossToolLoop(t *testing.T) {
 
 func TestRunRefreshesCurrentTimeWhenReusingSession(t *testing.T) {
 	client := &captureClient{}
-	runtime := NewEngine(client, WithCurrentTime(CurrentTimeConfig{}))
+	runtime := NewEngine(client, WithCurrentTime(nil))
 	nowCalls := 0
 	runtime.currentTime.now = func() time.Time {
 		nowCalls++
@@ -322,7 +349,7 @@ func TestRunRefreshesCurrentTimeWhenReusingSession(t *testing.T) {
 
 func TestRunStreamInjectsCurrentTimeWithRequestLocationOverride(t *testing.T) {
 	client := &captureClient{}
-	runtime := NewEngine(client, WithCurrentTime(CurrentTimeConfig{}))
+	runtime := NewEngine(client, WithCurrentTime(nil))
 	runtime.currentTime.now = func() time.Time {
 		return time.Date(2026, time.July, 20, 7, 30, 45, 0, time.UTC)
 	}

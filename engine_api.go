@@ -26,12 +26,6 @@ type Engine struct {
 	now                   func() time.Time
 }
 
-// CurrentTimeConfig controls the time context injected by an Engine.
-type CurrentTimeConfig struct {
-	// Location controls the injected time zone. A nil location uses UTC.
-	Location *time.Location
-}
-
 type currentTimeRuntime struct {
 	location *time.Location
 	now      func() time.Time
@@ -147,11 +141,11 @@ func WithStopToolReminder(remainingModelCalls int) EngineOption {
 }
 
 // WithCurrentTime enables current-time injection for Run and RunStream calls.
-func WithCurrentTime(config CurrentTimeConfig) EngineOption {
+// A nil location means time.Local, the host's local time zone.
+func WithCurrentTime(location *time.Location) EngineOption {
 	return func(e *Engine) {
-		location := config.Location
 		if location == nil {
-			location = time.UTC
+			location = time.Local
 		}
 		e.currentTime = &currentTimeRuntime{
 			location: location,

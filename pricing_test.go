@@ -220,7 +220,7 @@ func TestPricingSupportsFullDayWindow(t *testing.T) {
 	assertCost(t, "input", cost.Input, 1)
 }
 
-func TestNewPricingDefaultsToShanghaiTime(t *testing.T) {
+func TestNewPricingDefaultsToLocalTime(t *testing.T) {
 	pricing, err := NewPricing(PricingConfig{
 		Rates:   Rates{Input: 2},
 		Windows: []RateWindow{{Start: "00:30", End: "08:30", Rates: Rates{Input: 1}}},
@@ -228,10 +228,15 @@ func TestNewPricingDefaultsToShanghaiTime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPricing returned error: %v", err)
 	}
+	if pricing.location != time.Local {
+		t.Fatalf("unexpected default location: %v, want the host local zone", pricing.location)
+	}
 
+	// The window is matched on the local wall clock, so 04:00 of that local
+	// day is inside it whatever zone the test host runs in.
 	cost := pricing.Price(CostInput{
 		InputTokens: 1_000_000,
-		Time:        time.Date(2026, time.March, 9, 0, 0, 0, 0, time.UTC),
+		Time:        time.Date(2026, time.March, 9, 4, 0, 0, 0, time.Local).UTC(),
 	})
 	assertCost(t, "input", cost.Input, 1)
 }
@@ -314,6 +319,19 @@ func TestNewPricingAcceptsSingleDigitHour(t *testing.T) {
 		Windows: []RateWindow{{Start: "8:30", End: "9:00", Rates: Rates{Input: 1}}},
 	}); err != nil {
 		t.Fatalf("NewPricing returned error: %v", err)
+	}
+}
+
+func TestNewPricingJSONDefaultsToLocalTime(t *testing.T) {
+	pricing, err := NewPricingJSON(`{
+		"rates": {"input": 2},
+		"windows": [{"start": "00:30", "end": "08:30", "rates": {"input": 1}}]
+	}`)
+	if err != nil {
+		t.Fatalf("NewPricingJSON returned error: %v", err)
+	}
+	if pricing.location != time.Local {
+		t.Fatalf("unexpected default location: %v, want the host local zone", pricing.location)
 	}
 }
 

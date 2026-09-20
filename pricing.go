@@ -9,9 +9,8 @@ import (
 )
 
 const (
-	tokensPerMillion       = 1_000_000
-	minutesPerDay          = 24 * 60
-	defaultPricingLocation = "Asia/Shanghai"
+	tokensPerMillion = 1_000_000
+	minutesPerDay    = 24 * 60
 )
 
 // Rates are per-million-token prices. The currency is chosen by the caller:
@@ -47,7 +46,7 @@ type RateWindow struct {
 // specific pricing belongs to a custom Pricer built with PricerFunc.
 type PricingConfig struct {
 	// Location is the time zone the windows are evaluated in. Nil means
-	// Asia/Shanghai.
+	// time.Local, the host's local time zone.
 	Location *time.Location
 	// Rates applies outside every window.
 	Rates Rates
@@ -261,24 +260,24 @@ func parseTimeOfDay(value string, allowDayEnd bool) (int, error) {
 	return hour*60 + minute, nil
 }
 
-// resolvePricingLocation falls back to Asia/Shanghai. Slim container images ship
-// without tzdata, and China has had no daylight saving since 1991, so a fixed
-// +08:00 is equivalent when the zone database is unavailable.
+// resolvePricingLocation falls back to the host's local time zone. The zone is
+// read here, while the price list is compiled, so a later change to time.Local
+// does not move an existing Pricing.
 func resolvePricingLocation(location *time.Location) *time.Location {
 	if location != nil {
 		return location
 	}
-	parsed, err := time.LoadLocation(defaultPricingLocation)
-	if err != nil {
-		return time.FixedZone("CST", 8*60*60)
-	}
-	return parsed
+	return time.Local
 }
 
+// resolvePricingLocationName resolves a configured zone name. An empty name
+// means the host's local time zone. Any other name is looked up in the zone
+// database, and a name that is not there is an error: substituting a guessed
+// offset would price calls in the wrong zone without saying so.
 func resolvePricingLocationName(name string) (*time.Location, error) {
 	text := strings.TrimSpace(name)
 	if text == "" {
-		return resolvePricingLocation(nil), nil
+		return time.Local, nil
 	}
 	location, err := time.LoadLocation(text)
 	if err != nil {
@@ -291,6 +290,7 @@ func resolvePricingLocationName(name string) (*time.Location, error) {
 // zone name string while Go uses *time.Location. Weekdays are numbers, matching
 // time.Weekday: 0 is Sunday.
 type pricingJSON struct {
+	// Location is a zone name. Empty means the host's local time zone.
 	Location string           `json:"location"`
 	Rates    Rates            `json:"rates"`
 	Windows  []rateWindowJSON `json:"windows"`
