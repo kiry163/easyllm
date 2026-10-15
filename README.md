@@ -582,6 +582,68 @@ fmt.Println(resp.Results[0].Document, resp.Results[0].Score)
 
 Phase one does not support `gte-rerank-v2`, the nested DashScope rerank protocol, or multimodal reranking.
 
+## Decision Model
+
+Use `NewDecisionClient(...)` with `ProviderQwen` and `decision-model-preview`. The client calls the TypeSafe System One endpoint `POST /systemone`, which answers several typed questions about one business state in a single forward pass: a multiple-choice pick, a yes/no judgment, and an ordered scale. It never generates text, so latency and cost do not grow with answer length.
+
+The endpoint is workspace-scoped, so pass your workspace `BaseURL` (`Config.BaseURL` already includes `/compatible-mode/v1`, and the client appends `/systemone`):
+
+```go
+client, err := easyllm.NewDecisionClient(easyllm.Config{
+	Provider: easyllm.ProviderQwen,
+	APIKey:   os.Getenv("DASHSCOPE_API_KEY"),
+	Model:    "decision-model-preview",
+	BaseURL:  "https://<WorkspaceId>.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+})
+if err != nil {
+	panic(err)
+}
+
+resp, err := client.Decide(context.Background(), easyllm.DecisionRequest{
+	State: map[string]any{
+		"ticket_id": "T-1001",
+		"content":   "The order was paid more than 24 hours ago but the funds never arrived, so the customer cannot use the core service and asks for immediate handling.",
+	},
+	Choice: map[string]easyllm.ChoiceQuestion{
+		"department": {
+			Instructions: "Which team should handle this?",
+			Criteria: map[string]string{
+				"billing":   "payment, refund, and invoice problems",
+				"technical": "product defects and integration problems",
+			},
+		},
+	},
+	Bool: map[string]easyllm.BoolQuestion{
+		"escalate": {Instructions: "Should the on-call engineer be notified right away?"},
+	},
+	Score: map[string]easyllm.ScoreQuestion{
+		"severity": {
+			Instructions: "How severe is this problem?",
+			Criteria: []string{
+				"minor, no functional impact",
+				"partly degraded, with a workaround",
+				"core function unavailable, no workaround",
+				"severe business or security impact",
+			},
+		},
+	},
+})
+if err != nil {
+	panic(err)
+}
+
+fmt.Println(resp.Choice["department"].Choice)          // billing
+fmt.Println(resp.Choice["department"].Confidence)      // 0.88
+fmt.Println(resp.Bool["escalate"].YesProbability)      // 0.99
+fmt.Println(resp.Score["severity"].Score)              // 2.25
+```
+
+Answers come back grouped by question type, so `resp.Choice["..."]`, `resp.Bool["..."]`, and `resp.Score["..."]` need no type assertion. `BoolAnswer.YesProbability` is P(yes), where 0 is no and 1 is yes; `ScoreAnswer.Score` is the probability weighted level index and can fall between two levels. `Model`, `RequestID`, `Usage`, `LatencyMS`, `Provider`, `RetryCount`, and the raw payload are reported on the response.
+
+Question ids must be unique across all three groups, and every requested id must be answered: the client validates the request before sending it, and a missing id, an unexpected id, a mismatched answer type, or a `choice` value outside the declared criteria fails the call instead of returning a zero value.
+
+Limits: at most 16 questions per request, at most 255 `choice` options, 2-255 `score` levels, and 65536 context tokens. Decision calls do not stream and do not go through `Engine`. `ExtraBody` and per-request `Options` are merged into the request body the same way as the other capability clients.
+
 ## Image Generation
 
 Use `NewImageClient(...)` for direct image generation requests. This API is separate from `NewClient(...)` and does not use `Engine`.
