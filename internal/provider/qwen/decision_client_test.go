@@ -3,6 +3,7 @@ package qwen
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -220,5 +221,217 @@ func TestDecisionClientOmitsEmptyQuestionFields(t *testing.T) {
 	}
 	if resp.Model != "decision-model-preview" {
 		t.Fatalf("expected the client model to be echoed back, got %q", resp.Model)
+	}
+}
+
+func TestDecisionClientValidatesRequestBeforeSending(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+	}))
+	defer server.Close()
+
+	validChoice := func() map[string]model.ChoiceQuestion {
+		return map[string]model.ChoiceQuestion{
+			"department": {Criteria: map[string]string{"billing": "billing", "technical": "technical"}},
+		}
+	}
+	tooMany := map[string]model.ChoiceQuestion{}
+	for i := range 17 {
+		tooMany[fmt.Sprintf("q%d", i)] = model.ChoiceQuestion{Criteria: map[string]string{"only": "only"}}
+	}
+	tooManyOptions := map[string]string{}
+	for i := range 256 {
+		tooManyOptions[fmt.Sprintf("option-%d", i)] = "an option"
+	}
+	tooManyLevels := make([]string, 256)
+	for i := range tooManyLevels {
+		tooManyLevels[i] = fmt.Sprintf("level-%d", i)
+	}
+
+	cases := []struct {
+		name string
+		req  model.DecisionRequest
+		want string
+	}{
+		{
+			name: "state is required",
+			req:  model.DecisionRequest{Choice: validChoice()},
+			want: "state is required",
+		},
+		{
+			name: "blank string state",
+			req:  model.DecisionRequest{State: "   ", Choice: validChoice()},
+			want: "state is required",
+		},
+		{
+			name: "empty map state",
+			req:  model.DecisionRequest{State: map[string]any{}, Choice: validChoice()},
+			want: "state is required",
+		},
+		{
+			name: "no questions",
+			req:  model.DecisionRequest{State: "ticket"},
+			want: "at least one question is required",
+		},
+		{
+			name: "too many questions",
+			req:  model.DecisionRequest{State: "ticket", Choice: tooMany},
+			want: "question count 17 exceeds the limit of 16",
+		},
+		{
+			name: "too many choice options",
+			req: model.DecisionRequest{State: "ticket", Choice: map[string]model.ChoiceQuestion{
+				"department": {Criteria: tooManyOptions},
+			}},
+			want: `choice question "department": option count 256 exceeds the limit of 255`,
+		},
+		{
+			name: "too many score levels",
+			req: model.DecisionRequest{State: "ticket", Score: map[string]model.ScoreQuestion{
+				"severity": {Criteria: tooManyLevels},
+			}},
+			want: `score question "severity": level count 256 exceeds the limit of 255`,
+		},
+		{
+			name: "empty question id",
+			req: model.DecisionRequest{State: "ticket", Choice: map[string]model.ChoiceQuestion{
+				"": {Criteria: map[string]string{"only": "only"}},
+			}},
+			want: "question id is required",
+		},
+		{
+			name: "duplicate question id",
+			req: model.DecisionRequest{
+				State:  "ticket",
+				Choice: validChoice(),
+				Score: map[string]model.ScoreQuestion{
+					"department": {Criteria: []string{"low", "high"}},
+				},
+			},
+			want: `duplicate question id "department"`,
+		},
+		{
+			name: "choice criteria required",
+			req: model.DecisionRequest{State: "ticket", Choice: map[string]model.ChoiceQuestion{
+				"department": {},
+			}},
+			want: `choice question "department": criteria is required`,
+		},
+		{
+			name: "choice option name required",
+			req: model.DecisionRequest{State: "ticket", Choice: map[string]model.ChoiceQuestion{
+				"department": {Criteria: map[string]string{" ": "blank option"}},
+			}},
+			want: `choice question "department": criteria option name is required`,
+		},
+		{
+			name: "score levels required",
+			req: model.DecisionRequest{State: "ticket", Score: map[string]model.ScoreQuestion{
+				"severity": {Criteria: []string{"only"}},
+			}},
+			want: `score question "severity": criteria requires at least 2 levels`,
+		},
+		{
+			name: "score blank level",
+			req: model.DecisionRequest{State: "ticket", Score: map[string]model.ScoreQuestion{
+				"severity": {Criteria: []string{"low", "  "}},
+			}},
+			want: `score question "severity": level 1 description is required`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client := NewProvider(
+				WithAPIKey("token"),
+				WithBaseURL(server.URL),
+			).DecisionClient(DecisionClientConfig{Model: "decision-model-preview"})
+
+			_, err := client.Decide(context.Background(), tc.req)
+			if err == nil || err.Error() != tc.want {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestDecisionClientAcceptsScalarState(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if body["state"] != float64(42) {
+			t.Fatalf("unexpected state: %#v", body["state"])
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"answers": map[string]any{"refund": map[string]any{"type": "noul", "noul": 0.82}},
+		})
+	}))
+	defer server.Close()
+
+	client := NewProvider(
+		WithAPIKey("token"),
+		WithBaseURL(server.URL),
+	).DecisionClient(DecisionClientConfig{Model: "decision-model-preview"})
+
+	resp, err := client.Decide(context.Background(), model.DecisionRequest{
+		State: 42,
+		Bool:  map[string]model.BoolQuestion{"refund": {}},
+	})
+	if err != nil {
+		t.Fatalf("Decide returned error: %v", err)
+	}
+	if resp.Bool["refund"].YesProbability != 0.82 {
+		t.Fatalf("unexpected bool answer: %#v", resp.Bool["refund"])
+	}
+}
+
+func TestDecisionClientRequestModelOverridesClientModel(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if body["model"] != "decision-model-experimental" {
+			t.Fatalf("unexpected model: %#v", body["model"])
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"answers": map[string]any{"refund": map[string]any{"type": "noul", "noul": 0.5}},
+		})
+	}))
+	defer server.Close()
+
+	client := NewProvider(
+		WithAPIKey("token"),
+		WithBaseURL(server.URL),
+	).DecisionClient(DecisionClientConfig{Model: "decision-model-preview"})
+
+	if _, err := client.Decide(context.Background(), model.DecisionRequest{
+		Model: "decision-model-experimental",
+		State: "is this comment asking for a refund?",
+		Bool:  map[string]model.BoolQuestion{"refund": {}},
+	}); err != nil {
+		t.Fatalf("Decide returned error: %v", err)
+	}
+}
+
+func TestDecisionClientRequiresModel(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+	}))
+	defer server.Close()
+
+	client := NewProvider(
+		WithAPIKey("token"),
+		WithBaseURL(server.URL),
+	).DecisionClient(DecisionClientConfig{})
+
+	_, err := client.Decide(context.Background(), model.DecisionRequest{
+		State: "ticket",
+		Bool:  map[string]model.BoolQuestion{"refund": {}},
+	})
+	if err == nil || err.Error() != "model is required" {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

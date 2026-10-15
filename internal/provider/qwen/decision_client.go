@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/kiry163/easyllm/internal/httpjson"
@@ -14,6 +15,11 @@ const (
 	decisionQuestionChoice = "choice"
 	decisionQuestionBool   = "noul"
 	decisionQuestionScore  = "score"
+
+	decisionMaxQuestions     = 16
+	decisionMaxChoiceOptions = 255
+	decisionMinScoreLevels   = 2
+	decisionMaxScoreLevels   = 255
 )
 
 type DecisionClientConfig struct {
@@ -52,6 +58,10 @@ func (c *DecisionClient) Decide(ctx context.Context, req model.DecisionRequest) 
 	}
 	if modelName == "" {
 		return nil, fmt.Errorf("model is required")
+	}
+
+	if err := validateDecisionRequest(req); err != nil {
+		return nil, err
 	}
 
 	body := cloneMap(c.extraBody)
@@ -234,4 +244,88 @@ func cloneDecisionStrings(src map[string]string) map[string]string {
 		dst[key] = value
 	}
 	return dst
+}
+
+func validateDecisionRequest(req model.DecisionRequest) error {
+	if err := validateDecisionState(req.State); err != nil {
+		return err
+	}
+
+	total := len(req.Choice) + len(req.Bool) + len(req.Score)
+	if total == 0 {
+		return fmt.Errorf("at least one question is required")
+	}
+	if total > decisionMaxQuestions {
+		return fmt.Errorf("question count %d exceeds the limit of %d", total, decisionMaxQuestions)
+	}
+
+	seen := make(map[string]struct{}, total)
+	for id, question := range req.Choice {
+		if err := registerDecisionQuestionID(seen, id); err != nil {
+			return err
+		}
+		if len(question.Criteria) == 0 {
+			return fmt.Errorf("choice question %q: criteria is required", id)
+		}
+		if len(question.Criteria) > decisionMaxChoiceOptions {
+			return fmt.Errorf("choice question %q: option count %d exceeds the limit of %d", id, len(question.Criteria), decisionMaxChoiceOptions)
+		}
+		for option := range question.Criteria {
+			if strings.TrimSpace(option) == "" {
+				return fmt.Errorf("choice question %q: criteria option name is required", id)
+			}
+		}
+	}
+	for id := range req.Bool {
+		if err := registerDecisionQuestionID(seen, id); err != nil {
+			return err
+		}
+	}
+	for id, question := range req.Score {
+		if err := registerDecisionQuestionID(seen, id); err != nil {
+			return err
+		}
+		if len(question.Criteria) < decisionMinScoreLevels {
+			return fmt.Errorf("score question %q: criteria requires at least %d levels", id, decisionMinScoreLevels)
+		}
+		if len(question.Criteria) > decisionMaxScoreLevels {
+			return fmt.Errorf("score question %q: level count %d exceeds the limit of %d", id, len(question.Criteria), decisionMaxScoreLevels)
+		}
+		for index, level := range question.Criteria {
+			if strings.TrimSpace(level) == "" {
+				return fmt.Errorf("score question %q: level %d description is required", id, index)
+			}
+		}
+	}
+	return nil
+}
+
+func registerDecisionQuestionID(seen map[string]struct{}, id string) error {
+	if strings.TrimSpace(id) == "" {
+		return fmt.Errorf("question id is required")
+	}
+	if _, ok := seen[id]; ok {
+		return fmt.Errorf("duplicate question id %q", id)
+	}
+	seen[id] = struct{}{}
+	return nil
+}
+
+func validateDecisionState(state any) error {
+	if state == nil {
+		return fmt.Errorf("state is required")
+	}
+	if text, ok := state.(string); ok {
+		if strings.TrimSpace(text) == "" {
+			return fmt.Errorf("state is required")
+		}
+		return nil
+	}
+	switch value := reflect.ValueOf(state); value.Kind() {
+	case reflect.Map, reflect.Slice, reflect.Array:
+		if value.Len() == 0 {
+			return fmt.Errorf("state is required")
+		}
+	}
+	return nil
 }
