@@ -181,6 +181,9 @@ func decodeDecisionResponse(body []byte, req model.DecisionRequest) (*model.Deci
 		if !ok {
 			return nil, fmt.Errorf("answer %q is missing from the response", id)
 		}
+		if err := checkDecisionAnswerType(id, decisionQuestionChoice, message); err != nil {
+			return nil, err
+		}
 		var answer struct {
 			Choice        string             `json:"choice"`
 			Confidence    float64            `json:"confidence"`
@@ -188,6 +191,9 @@ func decodeDecisionResponse(body []byte, req model.DecisionRequest) (*model.Deci
 		}
 		if err := json.Unmarshal(message, &answer); err != nil {
 			return nil, fmt.Errorf("decode answer %q: %w", id, err)
+		}
+		if _, ok := req.Choice[id].Criteria[answer.Choice]; !ok {
+			return nil, fmt.Errorf("answer %q: choice %q is not one of the criteria options", id, answer.Choice)
 		}
 		out.Choice[id] = model.ChoiceAnswer{
 			Choice:        answer.Choice,
@@ -200,6 +206,9 @@ func decodeDecisionResponse(body []byte, req model.DecisionRequest) (*model.Deci
 		message, ok := raw.Answers[id]
 		if !ok {
 			return nil, fmt.Errorf("answer %q is missing from the response", id)
+		}
+		if err := checkDecisionAnswerType(id, decisionQuestionBool, message); err != nil {
+			return nil, err
 		}
 		var answer struct {
 			Noul float64 `json:"noul"`
@@ -214,6 +223,9 @@ func decodeDecisionResponse(body []byte, req model.DecisionRequest) (*model.Deci
 		message, ok := raw.Answers[id]
 		if !ok {
 			return nil, fmt.Errorf("answer %q is missing from the response", id)
+		}
+		if err := checkDecisionAnswerType(id, decisionQuestionScore, message); err != nil {
+			return nil, err
 		}
 		var answer struct {
 			Score         float64            `json:"score"`
@@ -326,6 +338,19 @@ func validateDecisionState(state any) error {
 		if value.Len() == 0 {
 			return fmt.Errorf("state is required")
 		}
+	}
+	return nil
+}
+
+func checkDecisionAnswerType(id string, expected string, message json.RawMessage) error {
+	var envelope struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(message, &envelope); err != nil {
+		return fmt.Errorf("decode answer %q: %w", id, err)
+	}
+	if envelope.Type != expected {
+		return fmt.Errorf("answer %q: expected type %q, got %q", id, expected, envelope.Type)
 	}
 	return nil
 }

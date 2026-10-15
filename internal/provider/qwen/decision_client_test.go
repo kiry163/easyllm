@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/kiry163/easyllm/internal/model"
@@ -433,5 +434,127 @@ func TestDecisionClientRequiresModel(t *testing.T) {
 	})
 	if err == nil || err.Error() != "model is required" {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestDecisionClientRejectsUnexpectedAnswers(t *testing.T) {
+	req := model.DecisionRequest{
+		State: "ticket",
+		Choice: map[string]model.ChoiceQuestion{
+			"department": {Criteria: map[string]string{"billing": "billing", "technical": "technical"}},
+		},
+		Score: map[string]model.ScoreQuestion{
+			"severity": {Criteria: []string{"low", "high"}},
+		},
+	}
+
+	cases := []struct {
+		name    string
+		answers map[string]any
+		want    string
+	}{
+		{
+			name: "missing answer",
+			answers: map[string]any{
+				"department": map[string]any{"type": "choice", "choice": "billing"},
+			},
+			want: `answer "severity" is missing from the response`,
+		},
+		{
+			name: "unexpected answer",
+			answers: map[string]any{
+				"department": map[string]any{"type": "choice", "choice": "billing"},
+				"severity":   map[string]any{"type": "score", "score": 1.0},
+				"extra":      map[string]any{"type": "noul", "noul": 0.5},
+			},
+			want: `unexpected answer "extra" in the response`,
+		},
+		{
+			name: "mismatched answer type",
+			answers: map[string]any{
+				"department": map[string]any{"type": "choice", "choice": "billing"},
+				"severity":   map[string]any{"type": "noul", "noul": 0.5},
+			},
+			want: `answer "severity": expected type "score", got "noul"`,
+		},
+		{
+			name: "choice outside criteria",
+			answers: map[string]any{
+				"department": map[string]any{"type": "choice", "choice": "logistics"},
+				"severity":   map[string]any{"type": "score", "score": 1.0},
+			},
+			want: `answer "department": choice "logistics" is not one of the criteria options`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"model":      "decision-model-preview",
+					"request_id": "req-1",
+					"answers":    tc.answers,
+				})
+			}))
+			defer server.Close()
+
+			client := NewProvider(
+				WithAPIKey("token"),
+				WithBaseURL(server.URL),
+			).DecisionClient(DecisionClientConfig{Model: "decision-model-preview"})
+
+			_, err := client.Decide(context.Background(), req)
+			if err == nil || err.Error() != tc.want {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestDecisionClientSurfacesTransportAndDecodeErrors(t *testing.T) {
+	cases := []struct {
+		name    string
+		status  int
+		body    string
+		wantHas string
+	}{
+		{
+			name:    "http error status",
+			status:  http.StatusBadRequest,
+			body:    `{"message":"invalid api key"}`,
+			wantHas: `request failed: status=400 body={"message":"invalid api key"}`,
+		},
+		{
+			name:    "malformed json",
+			status:  http.StatusOK,
+			body:    "{",
+			wantHas: "decode decision response: ",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+
+			client := NewProvider(
+				WithAPIKey("token"),
+				WithBaseURL(server.URL),
+			).DecisionClient(DecisionClientConfig{Model: "decision-model-preview"})
+
+			_, err := client.Decide(context.Background(), model.DecisionRequest{
+				State: "ticket",
+				Bool:  map[string]model.BoolQuestion{"refund": {}},
+			})
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			if tc.wantHas != "" && !strings.Contains(err.Error(), tc.wantHas) {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
 	}
 }
