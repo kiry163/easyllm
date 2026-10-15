@@ -511,6 +511,76 @@ func TestDecisionClientRejectsUnexpectedAnswers(t *testing.T) {
 	}
 }
 
+func TestDecisionClientRejectsAnswersWithoutValueField(t *testing.T) {
+	req := model.DecisionRequest{
+		State: "ticket",
+		Choice: map[string]model.ChoiceQuestion{
+			"department": {Criteria: map[string]string{"billing": "billing"}},
+		},
+		Bool: map[string]model.BoolQuestion{"escalate": {}},
+		Score: map[string]model.ScoreQuestion{
+			"severity": {Criteria: []string{"low", "high"}},
+		},
+	}
+
+	cases := []struct {
+		name    string
+		answers map[string]any
+		want    string
+	}{
+		{
+			name: "choice answer without value",
+			answers: map[string]any{
+				"department": map[string]any{"type": "choice"},
+				"escalate":   map[string]any{"type": "noul", "noul": 0.5},
+				"severity":   map[string]any{"type": "score", "score": 1},
+			},
+			want: `answer "department": choice is required`,
+		},
+		{
+			name: "bool answer without value",
+			answers: map[string]any{
+				"department": map[string]any{"type": "choice", "choice": "billing"},
+				"escalate":   map[string]any{"type": "noul"},
+				"severity":   map[string]any{"type": "score", "score": 1},
+			},
+			want: `answer "escalate": noul is required`,
+		},
+		{
+			name: "score answer without value",
+			answers: map[string]any{
+				"department": map[string]any{"type": "choice", "choice": "billing"},
+				"escalate":   map[string]any{"type": "noul", "noul": 0.5},
+				"severity":   map[string]any{"type": "score"},
+			},
+			want: `answer "severity": score is required`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"model":      "decision-model-preview",
+					"request_id": "req-1",
+					"answers":    tc.answers,
+				})
+			}))
+			defer server.Close()
+
+			client := NewProvider(
+				WithAPIKey("token"),
+				WithBaseURL(server.URL),
+			).DecisionClient(DecisionClientConfig{Model: "decision-model-preview"})
+
+			_, err := client.Decide(context.Background(), req)
+			if err == nil || err.Error() != tc.want {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
 func TestDecisionClientSurfacesTransportAndDecodeErrors(t *testing.T) {
 	cases := []struct {
 		name    string

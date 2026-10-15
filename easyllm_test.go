@@ -1515,6 +1515,16 @@ func TestNewDecisionClientRejectsUnsupportedProvider(t *testing.T) {
 	}
 }
 
+func TestNewDecisionClientRejectsMissingModel(t *testing.T) {
+	_, err := NewDecisionClient(Config{
+		Provider: ProviderQwen,
+		APIKey:   "token",
+	})
+	if err == nil || err.Error() != "model is required" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestNewDecisionClientUsesBaseURLAndExtraBody(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/systemone" {

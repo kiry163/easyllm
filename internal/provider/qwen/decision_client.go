@@ -185,18 +185,21 @@ func decodeDecisionResponse(body []byte, req model.DecisionRequest) (*model.Deci
 			return nil, err
 		}
 		var answer struct {
-			Choice        string             `json:"choice"`
+			Choice        *string            `json:"choice"`
 			Confidence    float64            `json:"confidence"`
 			Probabilities map[string]float64 `json:"probabilities"`
 		}
 		if err := json.Unmarshal(message, &answer); err != nil {
 			return nil, fmt.Errorf("decode answer %q: %w", id, err)
 		}
-		if _, ok := req.Choice[id].Criteria[answer.Choice]; !ok {
-			return nil, fmt.Errorf("answer %q: choice %q is not one of the criteria options", id, answer.Choice)
+		if answer.Choice == nil {
+			return nil, fmt.Errorf("answer %q: choice is required", id)
+		}
+		if _, ok := req.Choice[id].Criteria[*answer.Choice]; !ok {
+			return nil, fmt.Errorf("answer %q: choice %q is not one of the criteria options", id, *answer.Choice)
 		}
 		out.Choice[id] = model.ChoiceAnswer{
-			Choice:        answer.Choice,
+			Choice:        *answer.Choice,
 			Confidence:    answer.Confidence,
 			Probabilities: answer.Probabilities,
 		}
@@ -211,12 +214,15 @@ func decodeDecisionResponse(body []byte, req model.DecisionRequest) (*model.Deci
 			return nil, err
 		}
 		var answer struct {
-			Noul float64 `json:"noul"`
+			Noul *float64 `json:"noul"`
 		}
 		if err := json.Unmarshal(message, &answer); err != nil {
 			return nil, fmt.Errorf("decode answer %q: %w", id, err)
 		}
-		out.Bool[id] = model.BoolAnswer{YesProbability: answer.Noul}
+		if answer.Noul == nil {
+			return nil, fmt.Errorf("answer %q: noul is required", id)
+		}
+		out.Bool[id] = model.BoolAnswer{YesProbability: *answer.Noul}
 	}
 
 	for id := range req.Score {
@@ -228,7 +234,7 @@ func decodeDecisionResponse(body []byte, req model.DecisionRequest) (*model.Deci
 			return nil, err
 		}
 		var answer struct {
-			Score         float64            `json:"score"`
+			Score         *float64           `json:"score"`
 			Confidence    float64            `json:"confidence"`
 			Legend        map[string]string  `json:"legend"`
 			Probabilities map[string]float64 `json:"probabilities"`
@@ -236,8 +242,11 @@ func decodeDecisionResponse(body []byte, req model.DecisionRequest) (*model.Deci
 		if err := json.Unmarshal(message, &answer); err != nil {
 			return nil, fmt.Errorf("decode answer %q: %w", id, err)
 		}
+		if answer.Score == nil {
+			return nil, fmt.Errorf("answer %q: score is required", id)
+		}
 		out.Score[id] = model.ScoreAnswer{
-			Score:         answer.Score,
+			Score:         *answer.Score,
 			Confidence:    answer.Confidence,
 			Legend:        answer.Legend,
 			Probabilities: answer.Probabilities,
