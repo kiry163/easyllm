@@ -1489,3 +1489,87 @@ func TestNewClientRejectsWrongOptionType(t *testing.T) {
 		t.Fatalf("expected option type error")
 	}
 }
+
+func TestNewDecisionClientSupportsQwen(t *testing.T) {
+	client, err := NewDecisionClient(Config{
+		Provider: ProviderQwen,
+		APIKey:   "token",
+		Model:    "decision-model-preview",
+	})
+	if err != nil {
+		t.Fatalf("NewDecisionClient returned error: %v", err)
+	}
+	if client == nil {
+		t.Fatal("expected decision client")
+	}
+}
+
+func TestNewDecisionClientRejectsUnsupportedProvider(t *testing.T) {
+	_, err := NewDecisionClient(Config{
+		Provider: ProviderOpenAI,
+		APIKey:   "token",
+		Model:    "decision-model-preview",
+	})
+	if err == nil || err.Error() != `provider "openai" does not support the decision model` {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestNewDecisionClientUsesBaseURLAndExtraBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/systemone" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer token" {
+			t.Fatalf("unexpected authorization header: %q", got)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if body["model"] != "decision-model-preview" {
+			t.Fatalf("unexpected model: %#v", body["model"])
+		}
+		if body["custom"] != "config" {
+			t.Fatalf("extra body did not reach the request: %#v", body["custom"])
+		}
+		if body["state"] != "is this comment asking for a refund?" {
+			t.Fatalf("unexpected state: %#v", body["state"])
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"model":      "decision-model-preview",
+			"request_id": "req-1",
+			"answers": map[string]any{
+				"refund": map[string]any{"type": "noul", "noul": 0.82},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client, err := NewDecisionClient(Config{
+		Provider:  ProviderQwen,
+		APIKey:    "token",
+		Model:     "decision-model-preview",
+		BaseURL:   server.URL,
+		ExtraBody: map[string]any{"custom": "config"},
+	})
+	if err != nil {
+		t.Fatalf("NewDecisionClient returned error: %v", err)
+	}
+
+	resp, err := client.Decide(context.Background(), DecisionRequest{
+		State: "is this comment asking for a refund?",
+		Bool: map[string]BoolQuestion{
+			"refund": {Instructions: "is this asking for a refund?"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Decide returned error: %v", err)
+	}
+	if resp.Bool["refund"].YesProbability != 0.82 {
+		t.Fatalf("unexpected bool answer: %#v", resp.Bool["refund"])
+	}
+	if resp.Provider != "qwen" || resp.RequestID != "req-1" {
+		t.Fatalf("unexpected response: %#v", resp)
+	}
+}

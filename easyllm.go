@@ -44,6 +44,16 @@ type RerankClient = model.RerankClient
 type RerankRequest = model.RerankRequest
 type RerankResponse = model.RerankResponse
 type RerankResult = model.RerankResult
+
+type DecisionClient = model.DecisionClient
+type DecisionRequest = model.DecisionRequest
+type DecisionResponse = model.DecisionResponse
+type ChoiceQuestion = model.ChoiceQuestion
+type BoolQuestion = model.BoolQuestion
+type ScoreQuestion = model.ScoreQuestion
+type ChoiceAnswer = model.ChoiceAnswer
+type BoolAnswer = model.BoolAnswer
+type ScoreAnswer = model.ScoreAnswer
 type InputItem = model.InputItem
 type OutputItem = model.OutputItem
 type Usage = model.Usage
@@ -197,6 +207,21 @@ func NewRerankClient(config Config) (RerankClient, error) {
 		return nil, err
 	}
 	return newQwenRerankClient(config, doer), nil
+}
+
+func NewDecisionClient(config Config) (DecisionClient, error) {
+	if err := validateCapabilityConfig(config); err != nil {
+		return nil, err
+	}
+	if config.Provider != ProviderQwen {
+		return nil, fmt.Errorf("provider %q does not support the decision model", config.Provider)
+	}
+
+	doer, err := newHTTPDoer(config)
+	if err != nil {
+		return nil, err
+	}
+	return newQwenDecisionClient(config, doer), nil
 }
 
 func ListModels(ctx context.Context, config Config) (*ListModelsResponse, error) {
@@ -474,6 +499,25 @@ func newQwenRerankClient(config Config, doer HTTPDoer) RerankClient {
 		}))
 	}
 	return qwen.NewProvider(opts...).RerankClient(qwen.RerankClientConfig{Model: config.Model})
+}
+
+func newQwenDecisionClient(config Config, doer HTTPDoer) DecisionClient {
+	opts := []qwen.ProviderOption{
+		qwen.WithAPIKey(config.APIKey),
+		qwen.WithExtraBody(configExtraBody(config)),
+		qwen.WithHTTPDoer(doer),
+	}
+	if config.BaseURL != "" {
+		opts = append(opts, qwen.WithBaseURL(config.BaseURL))
+	}
+	if config.MaxRetries > 0 {
+		opts = append(opts, qwen.WithRetry(qwen.RetryConfig{
+			MaxRetries:     config.MaxRetries,
+			InitialBackoff: config.InitialBackoff,
+			MaxBackoff:     config.MaxBackoff,
+		}))
+	}
+	return qwen.NewProvider(opts...).DecisionClient(qwen.DecisionClientConfig{Model: config.Model})
 }
 
 func newDeepSeekClient(config Config, doer HTTPDoer) (Client, error) {
