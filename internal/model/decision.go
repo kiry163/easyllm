@@ -64,14 +64,14 @@ type ScoreAnswer struct {
 // DecisionResponse holds one answer per requested question id, grouped by
 // question type.
 type DecisionResponse struct {
-	Choice     map[string]ChoiceAnswer
-	Bool       map[string]BoolAnswer
-	Score      map[string]ScoreAnswer
-	Model      string
-	RequestID  string
-	Usage      Usage
-	LatencyMS  float64
-	Provider   string
-	RetryCount int
-	Raw        any
+	Choice     map[string]ChoiceAnswer `json:"choice"`
+	Bool       map[string]BoolAnswer   `json:"bool"`
+	Score      map[string]ScoreAnswer  `json:"score"`
+	Model      string                  `json:"model"`
+	RequestID  string                  `json:"request_id"`
+	Usage      Usage                   `json:"usage"`
+	LatencyMS  float64                 `json:"latency_ms"`
+	Provider   string                  `json:"provider"`
+	RetryCount int                     `json:"retry_count"`
+	Raw        any                     `json:"raw"`
 }
